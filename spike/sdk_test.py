@@ -2,7 +2,6 @@ import asyncio
 import os
 import time
 
-# Point the SDK at local Ollama. "ollama" is a dummy value, not a real key.
 os.environ["ANTHROPIC_BASE_URL"] = "http://localhost:11434"
 os.environ["ANTHROPIC_AUTH_TOKEN"] = "ollama"
 
@@ -37,15 +36,25 @@ server = create_sdk_mcp_server(
     name="lenny", version="1.0.0", tools=[search_transcripts]
 )
 
+BUILTIN_TOOLS = [
+    "Task", "Bash", "CronCreate", "CronDelete", "CronList", "DesignSync",
+    "Edit", "EnterWorktree", "ExitWorktree", "Glob", "Grep", "ListAgents",
+    "Monitor", "NotebookEdit", "PowerShell", "PushNotification", "Read",
+    "ReportFindings", "ScheduleWakeup", "SendMessage", "Skill", "TaskStop",
+    "WebFetch", "WebSearch", "Workflow", "Write",
+]
+
 options = ClaudeAgentOptions(
-    model="llama3.2:3b",
+    model="qwen2.5:7b",
     mcp_servers={"lenny": server},
     allowed_tools=["mcp__lenny__search_transcripts"],
+    disallowed_tools=BUILTIN_TOOLS,
     system_prompt=(
-        "You answer questions using ONLY the search_transcripts tool. "
-        "Always call it first. Cite the episode."
+        "You are a transcript assistant. For every question, call the "
+        "search_transcripts tool first, then answer using only its result "
+        "and cite the episode. Never use any other tool."
     ),
-    max_turns=4,
+    max_turns=6,
 )
 
 
