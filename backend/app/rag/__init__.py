@@ -1,16 +1,5 @@
 """RAG subsystem for Lenny Growth Assistant: parser, chunker, embeddings, ingestion, retrieval."""
 
-from app.rag.parser import (
-    ParsedDocument,
-    SpeakerTurn,
-    TranscriptDocument,
-    compute_content_hash,
-    extract_frontmatter,
-    extract_speaker_turns,
-    parse_transcript,
-    parse_transcript_file,
-    parse_transcript_text,
-)
 from app.rag.chunking import (
     ChunkDraft,
     ChunkResult,
@@ -23,8 +12,53 @@ from app.rag.chunking import (
     split_long_turn,
     split_sentences,
 )
+from app.rag.embeddings import (
+    DOCUMENT_PREFIX,
+    QUERY_PREFIX,
+    EmbeddingDimensionMismatchError,
+    EmbeddingModelNotFoundError,
+    EmbeddingsClient,
+    EmbeddingsError,
+    FakeEmbeddingsClient,
+    OllamaConnectionError,
+    OllamaEmbeddingsClient,
+    apply_prefix,
+    check_embedding_dim,
+    check_embedding_dim_async,
+    get_embedding,
+    get_embedding_async,
+    get_embeddings_batch,
+    get_embeddings_batch_async,
+    get_embeddings_client,
+    get_query_embedding,
+    get_query_embedding_async,
+    set_embeddings_client,
+)
+from app.rag.ingest import (
+    IngestionStats,
+    ingest_document,
+    ingest_transcripts,
+    resolve_data_dir,
+)
+from app.rag.parser import (
+    ParsedDocument,
+    SpeakerTurn,
+    TranscriptDocument,
+    compute_content_hash,
+    extract_frontmatter,
+    extract_speaker_turns,
+    parse_transcript,
+    parse_transcript_file,
+    parse_transcript_text,
+)
+from app.rag.retrieval import (
+    RetrievalResult,
+    get_chunks_by_ids,
+    retrieve,
+)
 
 __all__ = [
+    # Parser
     "ParsedDocument",
     "SpeakerTurn",
     "TranscriptDocument",
@@ -34,6 +68,7 @@ __all__ = [
     "parse_transcript",
     "parse_transcript_file",
     "parse_transcript_text",
+    # Chunker
     "ChunkDraft",
     "ChunkResult",
     "chunk_document",
@@ -44,4 +79,34 @@ __all__ = [
     "format_chunk_text",
     "split_long_turn",
     "split_sentences",
+    # Embeddings
+    "DOCUMENT_PREFIX",
+    "QUERY_PREFIX",
+    "apply_prefix",
+    "EmbeddingsClient",
+    "OllamaEmbeddingsClient",
+    "FakeEmbeddingsClient",
+    "get_embeddings_client",
+    "set_embeddings_client",
+    "get_embedding",
+    "get_query_embedding",
+    "get_embeddings_batch",
+    "get_embedding_async",
+    "get_query_embedding_async",
+    "get_embeddings_batch_async",
+    "check_embedding_dim",
+    "check_embedding_dim_async",
+    "EmbeddingsError",
+    "OllamaConnectionError",
+    "EmbeddingModelNotFoundError",
+    "EmbeddingDimensionMismatchError",
+    # Ingest
+    "IngestionStats",
+    "ingest_document",
+    "ingest_transcripts",
+    "resolve_data_dir",
+    # Retrieval
+    "RetrievalResult",
+    "retrieve",
+    "get_chunks_by_ids",
 ]
