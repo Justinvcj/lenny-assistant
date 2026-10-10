@@ -91,21 +91,32 @@ async def create_artifact(
     title: str,
     html: str,
     *,
+    artifact_type: str = "html",
     max_bytes: int = 200_000,
 ) -> ToolResult:
-    """Package generated HTML into an artifact payload.
+    """Package generated HTML or markdown into an artifact payload.
 
-    The HTML is stored as-is; the frontend renders it in a sandboxed iframe.
+    The content is stored as-is; the frontend renders it in a sandboxed iframe or markdown pane.
     Content is truncated at max_bytes to prevent abuse.
 
     Args:
-        title:     Human-readable artifact title.
-        html:      Raw HTML string to render.
-        max_bytes: Hard cap on artifact size (default 200 KB).
+        title:         Human-readable artifact title.
+        html:          Raw HTML or markdown string to render.
+        artifact_type: 'html' or 'markdown'.
+        max_bytes:     Hard cap on artifact size (default 200 KB).
 
     Returns:
-        dict with keys: title, html, size_bytes, truncated
+        dict with keys: title, html, type, size_bytes, truncated
     """
+    clean_type = artifact_type.strip().lower()
+    if clean_type not in ("html", "markdown"):
+        from app.errors import AppException
+        raise AppException(
+            code="invalid_artifact_type",
+            message=f"Artifact type must be 'html' or 'markdown', got '{artifact_type}'",
+            status_code=422,
+        )
+
     encoded = html.encode("utf-8")
     truncated = len(encoded) > max_bytes
     if truncated:
@@ -116,6 +127,7 @@ async def create_artifact(
     return {
         "title": title,
         "html": html,
+        "type": clean_type,
         "size_bytes": len(encoded),
         "truncated": truncated,
     }

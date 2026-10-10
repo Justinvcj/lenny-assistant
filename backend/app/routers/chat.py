@@ -272,20 +272,39 @@ async def post_message(
     # 11. Artifact persistence
     artifact_record = None
     if essay_artifact_data:
+        art_content = essay_artifact_data["content"]
+        content_bytes = len(art_content.encode("utf-8"))
+        if content_bytes > settings.artifact_max_bytes:
+            raise AppException(
+                code="artifact_too_large",
+                message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
         artifact_record = Artifact(
             session_id=session_id,
             type="markdown",
             title=essay_artifact_data["title"],
-            content=essay_artifact_data["content"],
+            content=art_content,
         )
         db.add(artifact_record)
         await db.flush()
     elif artifact_data and isinstance(artifact_data, dict):
+        art_content = artifact_data.get("html", "")
+        content_bytes = len(art_content.encode("utf-8"))
+        if content_bytes > settings.artifact_max_bytes:
+            raise AppException(
+                code="artifact_too_large",
+                message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        art_type = artifact_data.get("type", "html").lower()
+        if art_type not in ("markdown", "html"):
+            art_type = "html"
         artifact_record = Artifact(
             session_id=session_id,
-            type="html",
+            type=art_type,
             title=artifact_data.get("title", "Generated Artifact"),
-            content=artifact_data.get("html", ""),
+            content=art_content,
         )
         db.add(artifact_record)
         await db.flush()

@@ -65,3 +65,23 @@ class ChatResponse(BaseModel):
     degraded: bool = False
     latency_ms: Optional[int] = None
     artifact: Optional[Dict[str, Any]] = None
+
+
+class ArtifactCreate(BaseModel):
+    session_id: uuid.UUID
+    title: str = Field(..., min_length=1, max_length=200)
+    type: str = Field(..., description="Artifact type: markdown or html")
+    content: str = Field(..., description="Raw text or HTML content")
+
+
+class ArtifactResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    message_id: Optional[uuid.UUID] = None
+    type: str
+    title: str
+    content: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

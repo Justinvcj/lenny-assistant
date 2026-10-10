@@ -39,34 +39,32 @@
 | `fe7c62d` | P4c | Chat endpoint, immediate refusal, citation retry |
 | `fde0cd8` | P4d | Real E2E evaluation against qwen2.5:7b |
 | `4c5e596`+ | P5 | Full React chat UI, 150/150 Vitest tests |
-| `2bf3b28` | **P6** ✅ | Ship30 skill, validator, P6b tests, test infra fixes |
+| `2bf3b28` | P6 | Ship30 skill, validator, P6b tests, test infra fixes |
+| *(pending)* | **P7** ✅ | Artifact panel safe viewer, sandboxed iframe CSP, 166/166 vitest, 307/307 pytest |
 
-## Current Position: P7 — Artifact Panel Safe Viewer
+## Current Position: P8 — Security Self-Review & Adversarial Audit
 
-### What was done this session
-- ✅ `backend/app/skills/__init__.py` — made skills a package
-- ✅ `backend/app/skills/ship30_rules.yaml` — rules (all DRAFT-UNVERIFIED, source missing)
-- ✅ `backend/app/skills/validator.py` — pure-code essay validator (R_LENGTH, R_HOOK, R_STRUCTURE, R_FORMATTING, R_TAKEAWAY, R_CITATION)
-- ✅ `backend/app/skills/ship30.py` — full pipeline: plan_outline → draft_section (per-section LLM calls) → assemble → validate → repair-once
-- ✅ `backend/app/agent/tools.py` — `generate_ship30_essay` wired to real skill (graceful degradation if no sources/provider)
-- ✅ `backend/app/routers/chat.py` — ESSAY deterministic fallback added; markdown artifact persistence; `artifact` response now returns `{id, title, type}`
-- ✅ `backend/tests/test_ship30.py` — 14 tests: validator unit tests, plan_outline tests, E2E with FakeLLMProvider
-- ✅ `backend/tests/conftest.py` — Windows `WindowsSelectorEventLoopPolicy` fix for asyncio tests
-- ✅ `backend/tests/test_health.py` — fixed AsyncMock scalar coroutine bug
-- ✅ `backend/tests/test_sessions.py` — rewritten to use `dependency_overrides` instead of `patch`
-- ✅ `frontend/src/components/CitationChips.tsx` — fixed unhandled setTimeout after teardown (scroll ref)
-- 🔲 **P6 real run** — two essay topics via live Ollama; results in `docs/AGENT_NOTES.md` (UNTESTED, DB not running locally)
-- 🔲 **Commit + push** — `feat: ship30 skill` → `origin/main`
-- 🔲 **P7** — Artifact panel safe viewer (frontend + backend)
+### What was done in P7
+- ✅ `backend/app/routers/artifacts.py` — added `POST /artifacts` with `ARTIFACT_MAX_BYTES` (413 `artifact_too_large`) and type `{markdown, html}` validation; `GET /artifacts/{id}`
+- ✅ `backend/app/schemas.py` — `ArtifactCreate` and `ArtifactResponse` models
+- ✅ `backend/app/routers/chat.py` — enforced artifact byte size cap (413) and type validation in persistence pipeline
+- ✅ `backend/app/agent/tools.py` — `create_artifact` tool validated for type in `('html', 'markdown')`
+- ✅ `backend/tests/test_artifacts.py` — 6 tests covering 200, 404, 201, 413, 422, and tool validation
+- ✅ `frontend/src/utils/sanitizeArtifact.ts` — DOMPurify sanitization with forbidden tags/handlers/remote images, CSP meta tag wrapper, size guard
+- ✅ `frontend/src/components/ArtifactPanel.tsx` — sandboxed iframe with empty `sandbox=""`, ReactMarkdown preview with safe links, Source tab, Copy and Download actions, size warning
+- ✅ `frontend/src/components/MessageItem.tsx` — added "Open artifact: [Title]" button when message has an artifact
+- ✅ `frontend/src/__tests__/ArtifactPanel.test.tsx` — 19 comprehensive tests for malicious payload corpus, CSP verification, empty sandbox tokens, download/copy buttons, and markdown link hardening
+- ✅ `docs/TEST_PLAN.md` — added automated test summary and manual browser checklist (M1–M11)
+- ✅ 307/307 backend pytest tests passing, 166/166 frontend vitest tests passing, production build passing
 
 ## Next Action
 ```
-Commit P6b to main:
+Commit P7 to main:
   git add -A
-  git commit -m "feat(phase-6): ship30 essay skill, validator, P6b tests, test infra fixes"
+  git commit -m "feat(phase-7): artifact panel and sandboxed viewer"
   git push origin main
 
-Then proceed to P7 (PROMPTS.md ## P7).
+Then proceed to P8 (PROMPTS.md ## P8 Security self-review).
 ```
 
 ## P7 Brief (from PROMPTS.md)

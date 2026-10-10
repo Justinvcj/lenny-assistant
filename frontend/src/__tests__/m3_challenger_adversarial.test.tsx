@@ -173,7 +173,11 @@ describe('Challenger M3-2 Empirical Adversarial Gate Review Suite', () => {
       const iframe = container.querySelector('iframe');
       expect(iframe).toBeInTheDocument();
       expect(iframe).toHaveAttribute('sandbox', '');
-      expect(iframe?.getAttribute('srcdoc')).toBe(hostileHtml);
+      const srcDoc = iframe?.getAttribute('srcdoc') || '';
+      expect(srcDoc).toContain('Content-Security-Policy');
+      expect(srcDoc).not.toContain('onmouseover');
+      expect(srcDoc).not.toContain('onerror');
+      expect(srcDoc).not.toContain('http-equiv="refresh"');
 
       // Verify iframe has accessible title attribute matching artifact title
       expect(iframe).toHaveAttribute('title', 'Hostile Attack Payload');

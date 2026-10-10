@@ -7,6 +7,7 @@ import {
   sendMessage,
   getHealth,
   getConfig,
+  getArtifact,
   ConfigResponse,
   Session,
   Message,
@@ -258,6 +259,15 @@ export const App: React.FC = () => {
 
       // Handle artifact preview if returned
       if (response.artifact) {
+        response.message.artifact = response.artifact;
+        if (response.artifact.id && !response.artifact.content && !(response.artifact as any).html) {
+          getArtifact(response.artifact.id)
+            .then((fullArt: ArtifactResponse) => {
+              setActiveArtifact(fullArt);
+              response.message.artifact = fullArt;
+            })
+            .catch((err: unknown) => console.warn('Failed to load full artifact:', err));
+        }
         setActiveArtifact(response.artifact as any);
         setIsArtifactOpen(true);
       }
@@ -350,6 +360,10 @@ export const App: React.FC = () => {
           messages={messages}
           isLoading={isSending || isLoadingSession}
           onCitationClick={handleCitationClick}
+          onOpenArtifact={(art) => {
+            setActiveArtifact(art);
+            setIsArtifactOpen(true);
+          }}
           loadingNode={
             isSending ? (
               <LoadingSkeleton

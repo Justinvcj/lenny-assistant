@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { AlertTriangle, Clock } from 'lucide-react';
+import { AlertTriangle, Clock, FileCode } from 'lucide-react';
 import { Message, EXACT_REFUSAL_MESSAGE } from '../api';
 import { CitationChips } from './CitationChips';
 import { RefusalCard } from './RefusalCard';
@@ -20,11 +20,13 @@ export const isRefusalContent = (content: string): boolean => {
 export interface MessageItemProps {
   message: Message;
   onCitationClick?: (citationNumber: number) => void;
+  onOpenArtifact?: (artifact: any) => void;
 }
 
 export const MessageItem: React.FC<MessageItemProps> = ({
   message,
   onCitationClick,
+  onOpenArtifact,
 }) => {
   const isUser = message.role === 'user';
   const isRefusal = !isUser && isRefusalContent(message.content);
@@ -155,6 +157,38 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             onCitationSelect={onCitationClick}
           />
         )}
+
+        {/* Associated Artifact Link Button */}
+        {(message.artifact || (message.artifacts && message.artifacts.length > 0)) && (() => {
+          const art = message.artifact || message.artifacts![0];
+          const artTitle = art.title || 'Generated Artifact';
+          return (
+            <div style={{ marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn-open-artifact"
+                onClick={() => onOpenArtifact?.(art)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.35rem 0.75rem',
+                  backgroundColor: 'var(--bg-surface-inset)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--brand-accent)',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+                aria-label={`Open artifact: ${artTitle}`}
+              >
+                <FileCode size={14} aria-hidden="true" />
+                <span>Open artifact: {artTitle}</span>
+              </button>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

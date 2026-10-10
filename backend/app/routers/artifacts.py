@@ -1,4 +1,4 @@
-"""Artifacts router for fetching saved artifacts."""
+"""Artifacts router for fetching and creating saved artifacts."""
 
 import uuid
 from typing import Any, Dict
@@ -6,18 +6,58 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db import get_db_session
 from app.errors import AppException
 from app.models import Artifact
+from app.schemas import ArtifactCreate, ArtifactResponse
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
+settings = get_settings()
+
+VALID_ARTIFACT_TYPES = {"markdown", "html"}
 
 
-@router.get("/{artifact_id}")
+@router.post("", response_model=ArtifactResponse, status_code=status.HTTP_201_CREATED)
+async def create_artifact_endpoint(
+    body: ArtifactCreate,
+    db: AsyncSession = Depends(get_db_session),
+) -> ArtifactResponse:
+    """Create and persist an artifact with size and type validation."""
+    clean_type = body.type.strip().lower()
+    if clean_type not in VALID_ARTIFACT_TYPES:
+        raise AppException(
+            code="invalid_artifact_type",
+            message=f"Artifact type must be one of {sorted(list(VALID_ARTIFACT_TYPES))}, got '{body.type}'",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    content_bytes = len(body.content.encode("utf-8"))
+    if content_bytes > settings.artifact_max_bytes:
+        raise AppException(
+            code="artifact_too_large",
+            message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+
+    artifact = Artifact(
+        id=uuid.uuid4(),
+        session_id=body.session_id,
+        type=clean_type,
+        title=body.title,
+        content=body.content,
+    )
+    db.add(artifact)
+    await db.commit()
+    await db.refresh(artifact)
+    return ArtifactResponse.model_validate(artifact)
+
+
+@router.get("/{artifact_id}", response_model=ArtifactResponse)
 async def get_artifact(
     artifact_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> ArtifactResponse:
     """Fetch an artifact by its UUID."""
     stmt = select(Artifact).where(Artifact.id == artifact_id)
     res = await db.execute(stmt)
@@ -28,12 +68,4 @@ async def get_artifact(
             message=f"Artifact {artifact_id} not found",
             status_code=status.HTTP_404_NOT_FOUND,
         )
-    return {
-        "id": str(artifact.id),
-        "session_id": str(artifact.session_id),
-        "message_id": str(artifact.message_id) if artifact.message_id else None,
-        "type": artifact.type,
-        "title": artifact.title,
-        "content": artifact.content,
-        "created_at": artifact.created_at.isoformat(),
-    }
+    return ArtifactResponse.model_validate(artifact)

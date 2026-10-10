@@ -20,6 +20,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   isLoading = false,
   loadingNode,
   errorNode,
+  onOpenArtifact,
   onSelectStarterQuestion,
   onCitationClick,
   children,
@@ -61,6 +62,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   key={message.id}
                   message={message}
                   onCitationClick={onCitationClick}
+                  onOpenArtifact={onOpenArtifact}
                 />
               ))}
 
