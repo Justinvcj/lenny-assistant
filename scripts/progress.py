@@ -10,7 +10,7 @@ def print_progress():
         ("P2: Database Schema & Sessions API", True),
         ("P3a: Transcript Corpus Analysis", True),
         ("P3b: Speaker Parser & Chunker", True),
-        ("P3c: Embeddings, Ingestion, Retrieval", False),
+        ("P3c: Embeddings, Ingestion, Retrieval", True),
         ("P4a: Intent Router, Prompts, Verifier", False),
         ("P4b: LLM Provider & Agent Orchestrator", False),
         ("P4c: Chat Endpoint & Grounding", False),
@@ -31,7 +31,7 @@ def print_progress():
     for name, is_done in phases:
         if is_done:
             status = "\033[92m[DONE]\033[0m"
-        elif name.startswith("P3c"):
+        elif name.startswith("P4a"):
             status = "\033[93m[IN PROGRESS]\033[0m"
         else:
             status = "\033[90m[PENDING]\033[0m"
