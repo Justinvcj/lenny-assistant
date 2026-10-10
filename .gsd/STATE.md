@@ -39,9 +39,9 @@
 | `fe7c62d` | P4c | Chat endpoint, immediate refusal, citation retry |
 | `fde0cd8` | P4d | Real E2E evaluation against qwen2.5:7b |
 | `4c5e596`+ | P5 | Full React chat UI, 150/150 Vitest tests |
-| *(pending)* | P6 | Ship 30 skill — **commit after full-suite green** |
+| `2bf3b28` | **P6** ✅ | Ship30 skill, validator, P6b tests, test infra fixes |
 
-## Current Position: P6b COMPLETE — ready to commit
+## Current Position: P7 — Artifact Panel Safe Viewer
 
 ### What was done this session
 - ✅ `backend/app/skills/__init__.py` — made skills a package
