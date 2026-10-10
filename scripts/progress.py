@@ -15,6 +15,15 @@ def print_progress():
         ("P4b: LLM Provider & Agent Orchestrator", True),
         ("P4c: Chat Endpoint & Grounding", True),
         ("P4d: Real E2E Run & Faithfulness Eval", True),
+        ("P5: Chat Screen (Frontend UI)", True),
+        ("P6: Ship 30 Essay Writer", False),
+        ("P7: Artifact Panel & Safe Preview", False),
+        ("P8: Security Review & Hardening", False),
+        ("P9: Error Handling, Logging, README", False),
+        ("P10: Full Test Suite & Manual Plan", False),
+        ("P11: Evaluation Script & Results", False),
+        ("P12: Documentation Sync", False),
+        ("P13: Final Evaluator Audit", False),
     ]
 
     total = len(phases)
@@ -31,8 +40,10 @@ def print_progress():
     for name, is_done in phases:
         if is_done:
             status = "\033[92m[DONE]\033[0m"
-        else:
+        elif name.startswith("P6"):
             status = "\033[93m[IN PROGRESS]\033[0m"
+        else:
+            status = "\033[90m[PENDING]\033[0m"
         print(f"  {status:<22} {name}")
     print("\n" + "=" * 60 + "\n")
 
