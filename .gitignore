@@ -9,3 +9,4 @@ notes/
 .agents/
 ORIGINAL_REQUEST.md
 prompt_draft.md
+dist/

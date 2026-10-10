@@ -1,133 +1,380 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  listSessions,
+  createSession,
+  getSession,
+  deleteSession,
+  sendMessage,
+  getHealth,
+  getConfig,
+  ConfigResponse,
+  Session,
+  Message,
+  ArtifactResponse,
+  ApiError,
+} from './api';
 
-interface ConfigData {
-  provider: string;
-  model: string;
-  embedding_model: string;
-  embedding_dim: number;
-}
-
-interface HealthData {
-  status: string;
-  database: {
-    connected: boolean;
-    vector_count: number;
-  };
-  ollama: {
-    reachable: boolean;
-    llm_model_present: boolean;
-    embedding_model_present: boolean;
-    llm_model: string;
-    embedding_model: string;
-  };
-}
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { ArtifactPanel } from './components/ArtifactPanel';
+import { ChatArea } from './components/ChatArea';
+import { Composer } from './components/Composer';
+import { LoadingSkeleton } from './components/LoadingSkeleton';
+import { ErrorBanner } from './components/ErrorBanner';
 
 export const App: React.FC = () => {
-  const [config, setConfig] = useState<ConfigData | null>(null);
-  const [health, setHealth] = useState<HealthData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Global & Session State
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoadingSession, setIsLoadingSession] = useState<boolean>(false);
 
-  const fetchData = async () => {
+  // Sending & In-flight State
+  const [isSending, setIsSending] = useState<boolean>(false);
+  const [sendStartTime, setSendStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Error Banner State
+  const [error, setError] = useState<{
+    message: string;
+    requestId?: string | null;
+    prompt?: string;
+  } | null>(null);
+
+  // Diagnostics & Config State
+  const [healthStatus, setHealthStatus] = useState<'ok' | 'degraded' | 'offline'>('ok');
+  const [config, setConfig] = useState<ConfigResponse | null>(null);
+
+  // Responsive Drawer & Layout State
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [isArtifactOpen, setIsArtifactOpen] = useState<boolean>(false);
+  const [activeArtifact, setActiveArtifact] = useState<ArtifactResponse | null>(null);
+
+  // -------------------------------------------------------------------------
+  // 1. Initial Config & Live Health Polling (15s interval)
+  // -------------------------------------------------------------------------
+  const pollHealth = useCallback(async () => {
     try {
-      setLoading(true);
-      const [configRes, healthRes] = await Promise.all([
-        fetch(`${API_BASE}/config`),
-        fetch(`${API_BASE}/health`),
-      ]);
+      const h = await getHealth();
+      setHealthStatus(h.status === 'ok' ? 'ok' : 'degraded');
+    } catch {
+      setHealthStatus('offline');
+    }
+  }, []);
 
-      if (configRes.ok) {
-        setConfig(await configRes.json());
-      }
-      if (healthRes.ok || healthRes.status === 503) {
-        setHealth(await healthRes.json());
-      } else {
-        setError(`Health error: HTTP ${healthRes.status}`);
-      }
+  useEffect(() => {
+    // Fetch initial config
+    getConfig()
+      .then((cfg) => setConfig(cfg))
+      .catch((err) => console.warn('Config fetch error:', err));
+
+    // Initial health poll + interval
+    pollHealth();
+    const interval = window.setInterval(pollHealth, 15000);
+    return () => window.clearInterval(interval);
+  }, [pollHealth]);
+
+  // -------------------------------------------------------------------------
+  // 2. Elapsed Timer for In-Flight Generation
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    let timer: number | undefined;
+    if (isSending && sendStartTime) {
+      setElapsedSeconds(0);
+      timer = window.setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - sendStartTime) / 1000));
+      }, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+    return () => {
+      if (timer) window.clearInterval(timer);
+    };
+  }, [isSending, sendStartTime]);
+
+  // -------------------------------------------------------------------------
+  // 3. Initial Sessions Load
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    let isMounted = true;
+    listSessions()
+      .then(async (fetchedSessions) => {
+        if (!isMounted) return;
+        const sorted = [...fetchedSessions].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        setSessions(sorted);
+        if (sorted.length > 0) {
+          const firstId = sorted[0].id;
+          setActiveSessionId(firstId);
+          setIsLoadingSession(true);
+          try {
+            const detail = await getSession(firstId);
+            if (isMounted) {
+              setMessages(detail.messages || []);
+            }
+          } catch (err: any) {
+            console.error('Failed to load initial session messages:', err);
+          } finally {
+            if (isMounted) setIsLoadingSession(false);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch session list:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // 4. Session Selection & Switching
+  // -------------------------------------------------------------------------
+  const handleSelectSession = async (sessionId: string) => {
+    if (sessionId === activeSessionId) {
+      setIsSidebarOpen(false);
+      return;
+    }
+
+    // Cancel in-flight request if switching sessions
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsSending(false);
+      setSendStartTime(null);
+    }
+
+    setError(null);
+    setActiveSessionId(sessionId);
+    setIsSidebarOpen(false);
+    setIsLoadingSession(true);
+
+    try {
+      const detail = await getSession(sessionId);
+      setMessages(detail.messages || []);
     } catch (err: any) {
-      setError(err?.message || 'Failed to connect to backend API');
+      setError({
+        message: err?.message || 'Failed to load conversation history.',
+        requestId: err?.requestId,
+      });
     } finally {
-      setLoading(false);
+      setIsLoadingSession(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 15000);
-    return () => clearInterval(interval);
-  }, []);
+  // -------------------------------------------------------------------------
+  // 5. New Chat Handler
+  // -------------------------------------------------------------------------
+  const handleNewChat = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsSending(false);
+      setSendStartTime(null);
+    }
+    setError(null);
+    setActiveSessionId(null);
+    setMessages([]);
+    setIsSidebarOpen(false);
+  };
 
-  const isHealthy = health?.status === 'ok';
+  // -------------------------------------------------------------------------
+  // 6. Delete Session Handler
+  // -------------------------------------------------------------------------
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId);
+      const remaining = sessions.filter((s) => s.id !== sessionId);
+      setSessions(remaining);
+
+      if (activeSessionId === sessionId) {
+        if (remaining.length > 0) {
+          handleSelectSession(remaining[0].id);
+        } else {
+          setActiveSessionId(null);
+          setMessages([]);
+        }
+      }
+    } catch (err: any) {
+      setError({
+        message: err?.message || 'Failed to delete session.',
+        requestId: err?.requestId,
+      });
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // 7. Send Message & Orchestration Pipeline
+  // -------------------------------------------------------------------------
+  const handleSendMessage = async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed || isSending) return;
+
+    setError(null);
+
+    // Optimistic user message representation
+    const tempUserMsg: Message = {
+      id: `temp-${Date.now()}`,
+      session_id: activeSessionId || '',
+      role: 'user',
+      content: trimmed,
+      citations: [],
+      tool_trace: [],
+      degraded: false,
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, tempUserMsg]);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsSending(true);
+    setSendStartTime(Date.now());
+
+    try {
+      let targetSessionId = activeSessionId;
+
+      // Lazy session creation if on welcome/new-chat state
+      if (!targetSessionId) {
+        const titleSnippet = trimmed.slice(0, 48);
+        const newSession = await createSession(titleSnippet, controller.signal);
+        targetSessionId = newSession.id;
+        tempUserMsg.session_id = targetSessionId;
+        setActiveSessionId(targetSessionId);
+        setSessions((prev) => [newSession, ...prev]);
+      }
+
+      const response = await sendMessage(targetSessionId, trimmed, controller.signal);
+
+      // Append assistant response to message history
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
+        return [...filtered, tempUserMsg, response.message];
+      });
+
+      // Handle artifact preview if returned
+      if (response.artifact) {
+        setActiveArtifact(response.artifact as any);
+        setIsArtifactOpen(true);
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        // Request cancelled by user — remove temp message without error banner
+        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
+      } else {
+        // Show error banner and remove pending message
+        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
+        setError({
+          message: err?.message || 'Failed to generate response.',
+          requestId: err instanceof ApiError ? err.requestId : null,
+          prompt: trimmed,
+        });
+      }
+    } finally {
+      abortControllerRef.current = null;
+      setIsSending(false);
+      setSendStartTime(null);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // 8. Cancel Handler (AbortController)
+  // -------------------------------------------------------------------------
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsSending(false);
+    setSendStartTime(null);
+  };
+
+  // -------------------------------------------------------------------------
+  // 9. Retry Handler
+  // -------------------------------------------------------------------------
+  const handleRetry = () => {
+    if (error?.prompt) {
+      const promptToRetry = error.prompt;
+      setError(null);
+      handleSendMessage(promptToRetry);
+    }
+  };
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '1rem' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#38bdf8' }}>Lenny Growth Assistant</h1>
-          <p style={{ margin: '0.25rem 0 0', color: '#94a3b8', fontSize: '0.875rem' }}>Grounded AI assistant over Lenny's Podcast transcripts</p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          {/* Status Dot */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#1e293b', padding: '0.4rem 0.75rem', borderRadius: '9999px', fontSize: '0.85rem' }}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: '10px',
-                height: '10px',
-                borderRadius: '50%',
-                backgroundColor: isHealthy ? '#22c55e' : '#eab308',
-                boxShadow: isHealthy ? '0 0 8px #22c55e' : '0 0 8px #eab308',
-              }}
-            />
-            <span style={{ color: '#cbd5e1' }}>{health?.status || (loading ? 'checking...' : 'offline')}</span>
-          </div>
+    <div className="app-shell">
+      {/* 1. Header */}
+      <Header
+        provider={config?.provider}
+        model={config?.model}
+        healthStatus={healthStatus}
+        isSidebarOpen={isSidebarOpen}
+        onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+      />
 
-          {/* Model Badge */}
-          {config && (
-            <div style={{ background: '#3b82f6', color: '#ffffff', padding: '0.4rem 0.75rem', borderRadius: '6px', fontSize: '0.85rem', fontWeight: 600 }}>
-              {config.provider}: {config.model}
-            </div>
-          )}
-        </div>
-      </header>
+      {/* 2. Responsive 3-Region Layout Body */}
+      <div className="app-body">
+        {/* Left Sidebar */}
+        <Sidebar
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          isOpen={isSidebarOpen}
+          onSelectSession={handleSelectSession}
+          onNewChat={handleNewChat}
+          onDeleteSession={handleDeleteSession}
+          onClose={() => setIsSidebarOpen(false)}
+        />
 
-      <main style={{ marginTop: '2rem' }}>
-        {error && (
-          <div style={{ padding: '1rem', background: '#450a0a', border: '1px solid #dc2626', borderRadius: '8px', color: '#fca5a5', marginBottom: '1.5rem' }}>
-            <strong>Connection Notice:</strong> {error}
-          </div>
+        {/* Backdrop for tablet/mobile drawer */}
+        {isSidebarOpen && (
+          <div
+            className="drawer-backdrop"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-hidden="true"
+          />
         )}
 
-        <section style={{ background: '#1e293b', borderRadius: '8px', padding: '1.5rem', border: '1px solid #334155' }}>
-          <h2 style={{ marginTop: 0, fontSize: '1.15rem', color: '#f1f5f9' }}>System Health Status</h2>
-          {loading && !health ? (
-            <p style={{ color: '#94a3b8' }}>Loading system diagnostics...</p>
-          ) : health ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '6px', border: '1px solid #334155' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#94a3b8' }}>PostgreSQL + pgvector</h3>
-                <p style={{ margin: '0.25rem 0' }}>Connected: <strong>{health.database.connected ? 'Yes' : 'No'}</strong></p>
-                <p style={{ margin: '0.25rem 0' }}>Indexed Chunks: <strong>{health.database.vector_count}</strong></p>
-              </div>
+        {/* Center Chat Viewport */}
+        <ChatArea
+          messages={messages}
+          isLoading={isSending || isLoadingSession}
+          loadingNode={
+            isSending ? (
+              <LoadingSkeleton
+                elapsedSeconds={elapsedSeconds}
+                onCancel={handleCancel}
+              />
+            ) : undefined
+          }
+          errorNode={
+            error ? (
+              <ErrorBanner
+                message={error.message}
+                requestId={error.requestId}
+                onRetry={error.prompt ? handleRetry : undefined}
+                onDismiss={() => setError(null)}
+              />
+            ) : undefined
+          }
+          onSelectStarterQuestion={handleSendMessage}
+        >
+          {/* Docked Composer at bottom of ChatArea */}
+          <Composer
+            onSend={handleSendMessage}
+            inflight={isSending}
+            disabled={isSending}
+          />
+        </ChatArea>
 
-              <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '6px', border: '1px solid #334155' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#94a3b8' }}>Ollama Local LLM</h3>
-                <p style={{ margin: '0.25rem 0' }}>Reachable: <strong>{health.ollama.reachable ? 'Yes' : 'No'}</strong></p>
-                <p style={{ margin: '0.25rem 0' }}>Chat Model ({health.ollama.llm_model}): <strong>{health.ollama.llm_model_present ? 'Ready' : 'Missing'}</strong></p>
-                <p style={{ margin: '0.25rem 0' }}>Embed Model ({health.ollama.embedding_model}): <strong>{health.ollama.embedding_model_present ? 'Ready' : 'Missing'}</strong></p>
-              </div>
-            </div>
-          ) : (
-            <p style={{ color: '#ef4444' }}>Unable to retrieve health status.</p>
-          )}
-        </section>
-
-        <section style={{ marginTop: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
-          P1 Scaffold active. Chat interface and RAG agent pipeline load in upcoming phases.
-        </section>
-      </main>
+        {/* Right Artifact Panel */}
+        <ArtifactPanel
+          isOpen={isArtifactOpen}
+          artifact={activeArtifact}
+          onClose={() => setIsArtifactOpen(false)}
+        />
+      </div>
     </div>
   );
 };
