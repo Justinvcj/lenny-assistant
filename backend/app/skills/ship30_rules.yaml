@@ -1,0 +1,57 @@
+# Ship 30 for 30 Writing Principles & Constraints
+# Generated for Task P6a
+# Note: notes/ship30_source.md was not found; all rules marked DRAFT-UNVERIFIED per specification.
+
+metadata:
+  version: "1.0.0"
+  target_word_count: 1250
+  min_word_count: 1000
+  max_word_count: 1500
+  source_file: "notes/ship30_source.md (MISSING)"
+
+rules:
+  - id: "R_LENGTH"
+    name: "Target Word Count"
+    description: "Total essay word count must be approximately 1,250 words (acceptable range: 1,000 to 1,500 words)."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+    min_words: 1000
+    max_words: 1500
+
+  - id: "R_HOOK"
+    name: "Compelling Opening Hook"
+    description: "The essay must begin with a compelling hook in the first 1-2 paragraphs establishing why the topic matters, without an introductory heading like 'Introduction'."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+
+  - id: "R_STRUCTURE"
+    name: "Multi-Section Modular Structure"
+    description: "The essay body must consist of 3 to 5 thematic sections, each separated by a Markdown H2 heading (## Section Title)."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+    min_sections: 3
+    max_sections: 5
+
+  - id: "R_FORMATTING"
+    name: "High-Skimmability Formatting"
+    description: "The essay must use skimmable formatting including bulleted/numbered lists and selective bolding on core insights across sections."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+
+  - id: "R_TAKEAWAY"
+    name: "Actionable Key Takeaways"
+    description: "The essay must conclude with a dedicated final section (e.g. '## Actionable Takeaways' or '## Key Takeaways') summarizing the primary lessons for operators."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+
+  - id: "R_CITATION"
+    name: "Grounded Source Citations"
+    description: "Every body section must contain at least one valid [S#] citation tag referencing the provided transcript chunks, with zero out-of-bounds tags."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: true
+
+  - id: "R_TONE"
+    name: "Active Voice & Operator Tone"
+    description: "Tone must be direct, authoritative, and practical for product leaders and founders, avoiding corporate jargon, passive voice, and unnecessary filler."
+    source: "DRAFT-UNVERIFIED"
+    checked_by_code: false

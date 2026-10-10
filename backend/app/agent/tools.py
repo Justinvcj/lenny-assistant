@@ -124,35 +124,60 @@ async def create_artifact(
 async def generate_ship30_essay(
     topic: str,
     key_points: Optional[List[str]] = None,
+    *,
+    sources: Optional[List[Any]] = None,
+    provider=None,
 ) -> ToolResult:
-    """Placeholder stub for the Ship-30 essay generator (P6 feature).
-
-    Returns a structured essay outline that the orchestrator can expand.
-    Full implementation added in P6.
+    """Generate a grounded Ship-30 essay using the real skill pipeline.
 
     Args:
         topic:      The essay topic extracted from the user message.
-        key_points: Optional list of points to include.
+        key_points: Optional extra points to prepend to the topic context.
+        sources:    Retrieved transcript chunks (injected by the endpoint).
+        provider:   LLM provider (injected by the endpoint).
 
     Returns:
-        dict with keys: topic, outline (list of str), status
+        dict with keys: topic, content, word_count, validation_report, status
     """
-    logger.info("generate_ship30_essay placeholder called for topic=%r", topic)
-    outline = [
-        f"Hook: Why {topic} matters for product-led growth",
-        "Opening insight from the transcripts",
-        "Key lesson 1 — with source citation",
-        "Key lesson 2 — with source citation",
-        "Actionable takeaway",
-        "Call to action / closing",
-    ]
-    if key_points:
-        outline = key_points + outline
+    logger.info("generate_ship30_essay: topic=%r, sources=%d", topic, len(sources or []))
+
+    if sources is None or provider is None:
+        # Graceful degradation if called without injected context (e.g. unit test stubs)
+        logger.warning("generate_ship30_essay called without sources/provider — returning placeholder")
+        return {
+            "topic": topic,
+            "content": f"# Essay: {topic}\n\n*(Essay generation requires grounded sources and an active LLM provider.)*",
+            "word_count": 0,
+            "validation_report": {"passed": False, "failed_rules": ["R_LENGTH"]},
+            "status": "degraded",
+        }
+
+    from app.skills.ship30 import generate_essay
+
+    result = await generate_essay(topic=topic, sources=sources, provider=provider)
+
+    report_dict = {
+        "passed": result.report.passed,
+        "word_count": result.report.word_count,
+        "failed_rules": result.report.failed_rules,
+        "rule_results": [
+            {
+                "rule_id": rv.rule_id,
+                "rule_name": rv.rule_name,
+                "passed": rv.passed,
+                "details": rv.details,
+            }
+            for rv in result.report.rule_results
+        ],
+    }
 
     return {
         "topic": topic,
-        "outline": outline,
-        "status": "placeholder — full implementation in P6",
+        "content": result.content,
+        "word_count": result.word_count,
+        "validation_report": report_dict,
+        "repaired": result.repaired,
+        "status": "ok" if result.report.passed else "validation_failed",
     }
 
 

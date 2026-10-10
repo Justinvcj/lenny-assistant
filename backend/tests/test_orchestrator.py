@@ -77,23 +77,24 @@ async def test_create_artifact_truncation():
 
 
 @pytest.mark.asyncio
-async def test_generate_ship30_essay_placeholder():
+async def test_generate_ship30_essay_no_sources_returns_degraded():
+    """Without sources/provider, the tool returns a degraded placeholder (not an outline)."""
     from app.agent.tools import generate_ship30_essay
 
     result = await generate_ship30_essay("activation energy")
     assert result["topic"] == "activation energy"
-    assert isinstance(result["outline"], list)
-    assert len(result["outline"]) >= 1
-    assert "placeholder" in result["status"]
+    assert "content" in result
+    assert result["status"] == "degraded"
 
 
 @pytest.mark.asyncio
-async def test_generate_ship30_essay_with_key_points():
+async def test_generate_ship30_essay_with_key_points_no_sources():
+    """key_points without sources still returns degraded content."""
     from app.agent.tools import generate_ship30_essay
 
     result = await generate_ship30_essay("retention", key_points=["Point A", "Point B"])
-    assert "Point A" in result["outline"]
-    assert "Point B" in result["outline"]
+    assert result["topic"] == "retention"
+    assert result["status"] == "degraded"
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.orchestrator import run_agent
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE, build_system_prompt, rewrite_query
-from app.agent.router import classify_intent
+from app.agent.router import Intent, classify_intent
 from app.agent.verify import verify_citations
 from app.config import get_settings
 from app.db import get_db_session
@@ -234,9 +234,53 @@ async def post_message(
         final_content = verif.cleaned_text
         final_citations = verif.citations
 
-    # 11. Artifact persistence (if created)
+    # 10b. ESSAY deterministic fallback — if intent is ESSAY and no artifact yet, run skill directly
+    essay_artifact_data: Optional[dict] = None
+    if intent == Intent.ESSAY and not artifact_data:
+        logger.info("ESSAY intent: agent did not return artifact — running ship30 skill fallback")
+        try:
+            from app.skills.ship30 import generate_essay
+            topic = body.content.strip()
+            essay_result = await generate_essay(topic=topic, sources=sources, provider=provider)
+            essay_artifact_data = {
+                "type": "markdown",
+                "title": f"Ship 30 Essay: {topic[:60]}",
+                "content": essay_result.content,
+                "word_count": essay_result.word_count,
+                "validation_report": {
+                    "passed": essay_result.report.passed,
+                    "failed_rules": essay_result.report.failed_rules,
+                },
+                "repaired": essay_result.repaired,
+            }
+            tool_trace.append({"action": "ship30_fallback", "word_count": essay_result.word_count})
+            # Replace final_content with a summary pointing to the artifact
+            wc = essay_result.word_count
+            rule_summary = (
+                "All Ship 30 rules passed."
+                if essay_result.report.passed
+                else f"Validation: {', '.join(essay_result.report.failed_rules)} flagged."
+            )
+            final_content = (
+                f"Here's your Ship 30 essay on **{topic[:80]}** "
+                f"({wc} words). {rule_summary}"
+            )
+            final_citations = []
+        except Exception as exc:
+            logger.warning("Ship 30 fallback failed: %s", exc)
+
+    # 11. Artifact persistence
     artifact_record = None
-    if artifact_data and isinstance(artifact_data, dict):
+    if essay_artifact_data:
+        artifact_record = Artifact(
+            session_id=session_id,
+            type="markdown",
+            title=essay_artifact_data["title"],
+            content=essay_artifact_data["content"],
+        )
+        db.add(artifact_record)
+        await db.flush()
+    elif artifact_data and isinstance(artifact_data, dict):
         artifact_record = Artifact(
             session_id=session_id,
             type="html",
@@ -267,11 +311,23 @@ async def post_message(
     await db.commit()
     await db.refresh(assistant_msg)
 
+    # Build artifact response: prefer essay artifact, then agent artifact
+    artifact_response = None
+    if artifact_record:
+        artifact_response = {
+            "id": str(artifact_record.id),
+            "title": artifact_record.title,
+            "type": artifact_record.type,
+        }
+    elif artifact_data and isinstance(artifact_data, dict):
+        artifact_response = artifact_data
+
     return ChatResponse(
         message=MessageResponse.model_validate(assistant_msg),
         citations=final_citations,
         intent=intent.value,
         degraded=degraded,
         latency_ms=elapsed_ms,
-        artifact=artifact_data,
+        artifact=artifact_response,
     )
+

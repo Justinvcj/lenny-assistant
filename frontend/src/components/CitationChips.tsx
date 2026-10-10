@@ -55,6 +55,7 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
+  const scrollTimeoutRef = useRef<number | null>(null);
 
   if (!citations || citations.length === 0) {
     return null;
@@ -68,28 +69,36 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
       onCitationSelect(citationNumber);
     }
 
-    setTimeout(() => {
-      const elementId = `source-item-${messageId}-${citationNumber}`;
-      const element = document.getElementById(elementId);
-      if (element) {
-        const prefersReducedMotion =
-          typeof window !== 'undefined' &&
-          window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    if (scrollTimeoutRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(scrollTimeoutRef.current);
+    }
 
-        element.scrollIntoView({
-          behavior: prefersReducedMotion ? 'auto' : 'smooth',
-          block: 'nearest',
-        });
-        element.focus?.();
-      }
-    }, 50);
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      scrollTimeoutRef.current = window.setTimeout(() => {
+        if (typeof document === 'undefined') return;
+        const elementId = `source-item-${messageId}-${citationNumber}`;
+        const element = document.getElementById(elementId);
+        if (element) {
+          const prefersReducedMotion =
+            window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
-    if (highlightTimeoutRef.current) {
+          element.scrollIntoView({
+            behavior: prefersReducedMotion ? 'auto' : 'smooth',
+            block: 'nearest',
+          });
+          element.focus?.();
+        }
+      }, 50);
+    }
+
+    if (highlightTimeoutRef.current && typeof window !== 'undefined') {
       window.clearTimeout(highlightTimeoutRef.current);
     }
-    highlightTimeoutRef.current = window.setTimeout(() => {
-      setHighlightedId(null);
-    }, 3000);
+    if (typeof window !== 'undefined') {
+      highlightTimeoutRef.current = window.setTimeout(() => {
+        setHighlightedId(null);
+      }, 3000);
+    }
   }, [messageId, onCitationSelect]);
 
   useEffect(() => {
@@ -100,8 +109,11 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
 
   useEffect(() => {
     return () => {
-      if (highlightTimeoutRef.current) {
+      if (highlightTimeoutRef.current && typeof window !== 'undefined') {
         window.clearTimeout(highlightTimeoutRef.current);
+      }
+      if (scrollTimeoutRef.current && typeof window !== 'undefined') {
+        window.clearTimeout(scrollTimeoutRef.current);
       }
     };
   }, []);

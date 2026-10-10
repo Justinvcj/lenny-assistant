@@ -10,3 +10,6 @@ notes/
 ORIGINAL_REQUEST.md
 prompt_draft.md
 dist/
+
+# GSD state — .gsd/STATE.md is tracked (our session resume file)
+.gsd/scratch/

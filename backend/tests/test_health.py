@@ -1,6 +1,6 @@
 """Tests for the /health and /config endpoints."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -29,14 +29,18 @@ async def test_health_ok_when_services_healthy():
         # Mock DB
         mock_session = AsyncMock()
         mock_session_factory.return_value.__aenter__.return_value = mock_session
-        mock_session.execute.return_value.scalar.return_value = 42
+        mock_res = MagicMock()
+        mock_res.scalar.return_value = 42
+        mock_session.execute.return_value = mock_res
 
         # Mock Ollama tags
         mock_http = AsyncMock()
-        mock_http.get.return_value.status_code = 200
-        mock_http.get.return_value.json.return_value = {
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
             "models": [{"name": "qwen2.5:7b"}, {"name": "nomic-embed-text"}]
         }
+        mock_http.get.return_value = mock_resp
         mock_client_cls.return_value.__aenter__.return_value = mock_http
 
         response = client.get("/health")
@@ -67,6 +71,9 @@ async def test_health_degraded_when_ollama_unreachable():
          patch("app.db.async_session_factory") as mock_session_factory:
 
         mock_session = AsyncMock()
+        mock_res = MagicMock()
+        mock_res.scalar.return_value = 42
+        mock_session.execute.return_value = mock_res
         mock_session_factory.return_value.__aenter__.return_value = mock_session
 
         mock_http = AsyncMock()
