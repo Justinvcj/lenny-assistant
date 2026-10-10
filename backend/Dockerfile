@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Set permissions
-RUN chown -R appuser:appuser /app
+RUN chmod +x /app/entrypoint.sh && chown -R appuser:appuser /app
 
 USER appuser
 
@@ -37,4 +37,4 @@ ENV PYTHONPATH=/app \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/entrypoint.sh"]

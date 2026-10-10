@@ -17,6 +17,7 @@ from app.errors import (
     unhandled_exception_handler,
 )
 from app.routers.health import router as health_router
+from app.routers.sessions import router as sessions_router
 
 settings = get_settings()
 setup_logging(settings.log_level)
@@ -71,3 +72,4 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # Routers
 app.include_router(health_router)
+app.include_router(sessions_router)
