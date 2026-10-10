@@ -13,10 +13,18 @@ import uuid
 from app.models import Chunk
 from app.rag.parser import ParsedDocument, SpeakerTurn
 
-# Sentence boundary regex with negative lookbehind for common honorifics & abbreviations
+# Negative lookbehinds for common abbreviations & honorifics (each pattern has fixed character length)
+_ABBREVIATIONS = (
+    r"(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Mrs\.)(?<!Prof\.)"
+    r"(?<!vs\.)(?<!i\.e\.)(?<!I\.e\.)(?<!e\.g\.)(?<!E\.g\.)(?<!etc\.)"
+    r"(?<!Jr\.)(?<!Sr\.)(?<!St\.)(?<!U\.S\.)(?<!Inc\.)(?<!Corp\.)(?<!Ltd\.)"
+)
+# Sentence boundary regex supporting:
+# 1) Standard punctuation [.!?] not preceded by abbreviation
+# 2) Punctuation inside closing quotes [.!?]["'”’]
+# Followed by whitespace, and lookahead for optional opening quote and capitalized token
 ABBREVIATION_SENTENCE_REGEX = re.compile(
-    r"(?<=[.!?])(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Mrs\.)(?<!Prof\.)"
-    r"(?<!vs\.)(?<!i\.e\.)(?<!e\.g\.)(?<!etc\.)(?<!Jr\.)(?<!Sr\.)(?<!St\.)\s+(?=[A-Z0-9])"
+    rf"(?:{_ABBREVIATIONS}(?<=[.!?])|(?<=[.!?][\"'”’]))\s+(?=[\"'“‘]?[A-Z0-9])"
 )
 
 
@@ -91,6 +99,22 @@ def split_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
+def _subdivide_oversized_sentence(sent: str, max_tokens: int = 400) -> List[str]:
+    """Subdivide an unpunctuated run-on sentence exceeding max_tokens into word slices."""
+    words_matches = list(re.finditer(r"\S+", sent))
+    target_words = max(50, int(max_tokens / 1.3))
+    if len(words_matches) <= target_words:
+        return [sent]
+
+    fragments: List[str] = []
+    for i in range(0, len(words_matches), target_words):
+        chunk_matches = words_matches[i : i + target_words]
+        frag_start = chunk_matches[0].start()
+        frag_end = chunk_matches[-1].end()
+        fragments.append(sent[frag_start:frag_end])
+    return fragments
+
+
 def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTurn]:
     """Split a single speaker turn exceeding the target token limit into sub-turns.
 
@@ -103,53 +127,71 @@ def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTur
     Returns:
         List of smaller SpeakerTurn instances.
     """
-    sentences = split_sentences(turn.text)
-    if not sentences:
+    raw_sentences = split_sentences(turn.text)
+    if not raw_sentences:
         return []
 
-    sub_turns: List[SpeakerTurn] = []
-    curr_sents: List[str] = []
-    curr_tokens = 0
-    search_pos = 0
+    # Flatten run-on sentences if any individual sentence exceeds max_tokens
+    sentences: List[str] = []
+    for s in raw_sentences:
+        if estimate_tokens(s) > max_tokens:
+            sentences.extend(_subdivide_oversized_sentence(s, max_tokens=max_tokens))
+        else:
+            sentences.append(s)
 
-    for sentence in sentences:
-        s_tokens = estimate_tokens(sentence)
-        if curr_tokens + s_tokens > max_tokens and curr_sents:
-            sub_text = " ".join(curr_sents)
-            s_start = turn.text.find(curr_sents[0], search_pos)
-            s_end = turn.text.find(curr_sents[-1], s_start) + len(curr_sents[-1])
-            search_pos = s_end
+    # Map each sentence sequentially to its exact character offset within turn.text
+    sentence_spans = []
+    search_pos = 0
+    for s in sentences:
+        s_start = turn.text.find(s, search_pos)
+        if s_start == -1:
+            s_start = search_pos
+        s_end = s_start + len(s)
+        sentence_spans.append((s, s_start, s_end))
+        search_pos = s_end
+
+    sub_turns: List[SpeakerTurn] = []
+    curr_spans = []
+    curr_tokens = 0
+
+    for span in sentence_spans:
+        s, s_start, s_end = span
+        s_tokens = estimate_tokens(s)
+        if curr_tokens + s_tokens > max_tokens and curr_spans:
+            sub_text = " ".join(sp[0] for sp in curr_spans)
+            sub_start_char = turn.start_char + curr_spans[0][1]
+            sub_end_char = turn.start_char + curr_spans[-1][2]
 
             sub_turns.append(
                 SpeakerTurn(
                     speaker=turn.speaker,
                     timestamp=turn.timestamp,
                     text=sub_text,
-                    start_char=turn.start_char + s_start,
-                    end_char=turn.start_char + s_end,
-                    turn_start_char=turn.turn_start_char if len(sub_turns) == 0 else turn.start_char + s_start,
-                    turn_end_char=turn.start_char + s_end,
+                    start_char=sub_start_char,
+                    end_char=sub_end_char,
+                    turn_start_char=turn.turn_start_char if len(sub_turns) == 0 else sub_start_char,
+                    turn_end_char=sub_end_char,
                     turn_index=turn.turn_index,
                 )
             )
-            curr_sents = [sentence]
+            curr_spans = [span]
             curr_tokens = s_tokens
         else:
-            curr_sents.append(sentence)
+            curr_spans.append(span)
             curr_tokens += s_tokens
 
-    if curr_sents:
-        sub_text = " ".join(curr_sents)
-        s_start = turn.text.find(curr_sents[0], search_pos)
-        s_end = turn.text.find(curr_sents[-1], s_start) + len(curr_sents[-1])
+    if curr_spans:
+        sub_text = " ".join(sp[0] for sp in curr_spans)
+        sub_start_char = turn.start_char + curr_spans[0][1]
+        sub_end_char = turn.start_char + curr_spans[-1][2]
         sub_turns.append(
             SpeakerTurn(
                 speaker=turn.speaker,
                 timestamp=turn.timestamp,
                 text=sub_text,
-                start_char=turn.start_char + s_start,
-                end_char=turn.start_char + s_end,
-                turn_start_char=turn.turn_start_char if len(sub_turns) == 0 else turn.start_char + s_start,
+                start_char=sub_start_char,
+                end_char=sub_end_char,
+                turn_start_char=turn.turn_start_char if len(sub_turns) == 0 else sub_start_char,
                 turn_end_char=turn.turn_end_char,
                 turn_index=turn.turn_index,
             )
@@ -204,6 +246,9 @@ def chunk_turns(
 ) -> List[ChunkDraft]:
     """Chunk a sequence of speaker turns into overlapping, speaker-turn aware chunks.
 
+    Maintains strict 1-turn overlap across all adjacent chunk pairs, eliminates
+    redundant single-turn subset chunks, and enforces token limits.
+
     Args:
         turns: Ordered list of parsed SpeakerTurn objects.
         document_id: Optional document UUID to attach to drafts.
@@ -222,12 +267,16 @@ def chunk_turns(
     if not valid_turns:
         return []
 
-    # Step 2: Split any single turns that exceed max_tokens into sentence sub-turns
+    # Step 2: Split any single turns exceeding turn_split_threshold into sentence sub-turns.
+    # Dynamically derived from min_tokens / target_tokens to support custom ranges.
+    turn_split_threshold = int(min_tokens * 0.85)  # e.g., ~297 tokens for min_tokens=350
+    subturn_max = int(target_tokens * 0.62)        # e.g., ~248 tokens for target_tokens=400
+
     normalized_turns: List[SpeakerTurn] = []
     for turn in valid_turns:
         turn_tokens = estimate_tokens(turn.text)
-        if turn_tokens > max_tokens:
-            normalized_turns.extend(split_long_turn(turn, max_tokens=target_tokens))
+        if turn_tokens > turn_split_threshold:
+            normalized_turns.extend(split_long_turn(turn, max_tokens=subturn_max))
         else:
             normalized_turns.append(turn)
 
@@ -240,10 +289,17 @@ def chunk_turns(
     tail_threshold = max(20, min(150, int(min_tokens * 0.45)))
     tail_merge_ceiling = max(500, int(max_tokens * 1.25))
 
-    # Step 3: Sliding window accumulation with 1-turn overlap
+    # Step 3: Sliding window accumulation with strict 1-turn overlap
     while i < n:
         tok_sum = estimate_tokens(normalized_turns[i].text)
         j = i + 1
+
+        # Strict forward progress & 1-turn overlap guarantee:
+        # Every chunk in a multi-turn sequence must contain at least turn i + 1
+        # to ensure it advances beyond the overlap turn and does not form a redundant single-turn subset.
+        if j < n:
+            tok_sum += estimate_tokens(normalized_turns[j].text)
+            j += 1
 
         while j < n:
             next_tokens = estimate_tokens(normalized_turns[j].text)
@@ -297,12 +353,23 @@ def chunk_turns(
             break
 
         # 1-turn overlap: next chunk begins at the last turn of the current chunk
-        next_i = chunk_end
-        if next_i <= i:
-            next_i = i + 1
-        i = next_i
+        # Because j >= i + 2 when j < n, chunk_end is strictly greater than i (chunk_end >= i + 1 > i)
+        i = chunk_end
 
-    return chunks
+    # Step 5: Defense-in-depth filter for any redundant subset chunks
+    pruned_chunks: List[ChunkDraft] = []
+    for c in chunks:
+        if pruned_chunks:
+            prev_turn_starts = set(t.start_char for t in pruned_chunks[-1].turns)
+            curr_turn_starts = set(t.start_char for t in c.turns)
+            if curr_turn_starts.issubset(prev_turn_starts):
+                continue
+        pruned_chunks.append(c)
+
+    for idx, c in enumerate(pruned_chunks):
+        c.chunk_index = idx
+
+    return pruned_chunks
 
 
 def chunk_document(

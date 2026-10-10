@@ -18,7 +18,7 @@ from app.models import Document
 # Strict regex requiring parenthesized timestamp:
 # prevents matching bold markdown titles like '**Area 51, An Uncensored History**:'
 SPEAKER_TURN_REGEX = re.compile(r"^\*\*([^*]+)\*\*\s*\(([^)]+)\):\s*", re.MULTILINE)
-FRONTMATTER_REGEX = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+FRONTMATTER_REGEX = re.compile(r"^\ufeff?---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 @dataclass
@@ -82,7 +82,8 @@ def extract_frontmatter(raw_text: str) -> tuple[Dict[str, Any], int]:
     Returns:
         tuple of (metadata_dict, body_start_char_offset)
     """
-    fm_match = FRONTMATTER_REGEX.match(raw_text)
+    clean_text = raw_text.lstrip("\ufeff")
+    fm_match = FRONTMATTER_REGEX.match(clean_text)
     if not fm_match:
         return {}, 0
 
@@ -161,8 +162,9 @@ def parse_transcript_text(
     slug: Optional[str] = None,
 ) -> ParsedDocument:
     """Parse transcript from in-memory string content."""
-    fm, body_start = extract_frontmatter(raw_text)
-    content_hash = compute_content_hash(raw_text)
+    clean_text = raw_text.lstrip("\ufeff")
+    fm, body_start = extract_frontmatter(clean_text)
+    content_hash = compute_content_hash(clean_text)
 
     derived_slug = slug
     if not derived_slug:
@@ -183,7 +185,7 @@ def parse_transcript_text(
         except (ValueError, TypeError):
             pub_date = None
 
-    turns, dropped_empty = extract_speaker_turns(raw_text, body_start=body_start)
+    turns, dropped_empty = extract_speaker_turns(clean_text, body_start=body_start)
 
     metadata: Dict[str, Any] = {
         "description": fm.get("description"),
@@ -207,7 +209,7 @@ def parse_transcript_text(
         content_hash=content_hash,
         metadata=metadata,
         turns=turns,
-        raw_text=raw_text,
+        raw_text=clean_text,
     )
 
 
@@ -226,7 +228,7 @@ def parse_transcript_file(
 ) -> ParsedDocument:
     """Parse transcript from a file path."""
     path = Path(file_path)
-    raw_text = path.read_text(encoding="utf-8")
+    raw_text = path.read_text(encoding="utf-8-sig")
     display_path = source_path_override or str(path).replace("\\", "/")
     return parse_transcript_text(
         raw_text=raw_text,

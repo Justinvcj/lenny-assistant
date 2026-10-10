@@ -94,27 +94,27 @@ The parser and chunker were executed across all 50 podcast transcripts in `data/
 - **Total Documents Analyzed:** 50
 - **Total Valid Speaker Turns:** 12,034
 - **Empty Turns Filtered (Sponsor Artifacts):** 55
-- **Total Chunks Produced:** 3,888
+- **Total Chunks Produced:** 3,899
 - **Chunk Token Statistics (words * 1.3 approximation):**
-  - **Minimum:** 99 tokens
-  - **10th Percentile (p10):** 312.0 tokens
-  - **25th Percentile (p25):** 365.0 tokens
+  - **Minimum:** 109 tokens
+  - **10th Percentile (p10):** 317.0 tokens
+  - **25th Percentile (p25):** 368.0 tokens
   - **Median (p50):** **413.0 tokens** (target: ~350–450)
-  - **Mean:** **400.3 tokens**
+  - **Mean:** **402.6 tokens**
   - **75th Percentile (p75):** 446.0 tokens
   - **90th Percentile (p90):** 463.0 tokens
   - **95th Percentile (p95):** 474.0 tokens
   - **Maximum:** 554 tokens
-- **Chunks per Episode:** Min: 46, Median: 77.0, Mean: 77.8, Max: 127
+- **Chunks per Episode:** Min: 46, Median: 76.5, Mean: 78.0, Max: 125
 
 ### 7.2 Token Distribution Bins
 | Token Range | Chunk Count | Percentage | Note |
 |---|---|---|---|
-| < 200 tokens | 19 | 0.5% | Outro tails and short boundary transitions |
-| 200 – 349 tokens | 710 | 18.3% | Short topic transitions or multi-turn boundaries |
-| **350 – 450 tokens** | **2,341** | **60.2%** | **Primary target window** |
-| 451 – 500 tokens | 787 | 20.2% | Extended single turns packed to threshold |
-| > 500 tokens | 31 | 0.8% | Monologue sub-turns split at sentence bounds |
+| < 200 tokens | 6 | 0.2% | Outro tails and short boundary transitions |
+| 200 – 349 tokens | 696 | 17.9% | Short topic transitions or multi-turn boundaries |
+| **350 – 450 tokens** | **2,359** | **60.5%** | **Primary target window** |
+| 451 – 500 tokens | 806 | 20.7% | Extended single turns packed to threshold |
+| > 500 tokens | 32 | 0.8% | Monologue sub-turns split at sentence bounds |
 
 ### 7.3 Three Representative Sample Chunks
 
@@ -132,17 +132,17 @@ The parser and chunker were executed across all 50 podcast transcripts in `data/
 > I think people assume that there's a much more detailed semantic understanding of everybody's interests and preferences in the algorithm than there is.
 
 #### Sample Chunk 2 (Mid-Episode Core Discussion)
-- **Chunk Index:** 105 | **Token Count:** 432 | **Primary Speaker:** Jason Lemkin
-- **Character Offsets:** [117142 : 118975]
+- **Chunk Index:** 103 | **Token Count:** 339 | **Primary Speaker:** Jason Lemkin
+- **Character Offsets:** [118923 : 120383]
 - **Verbatim Excerpt:**
-> **Lenny Rachitsky** (01:42:22):
-> The Terminal List?
+> **Jason Lemkin** (01:43:57):
+> Actually do the work.
 > 
-> **Jason Lemkin** (01:42:24):
-> The Terminal List, yeah. I'm not into the Chris Pratt. I'm not into that goofy superhero movies he does, and I know people like it, but The Terminal List, it's pretty, it's I got it, it's written by this ex Navy SEAL that I think tech people don't read the... Everyone, but outside of tech reads this author, but Amazon did this thing with The Terminal List and I think the reason it gripped me, it's like this post, it's like a lot of tech is right now is we're trying to do the right things, but are we doing the right things? It's just confusing. So this one, I couldn't put down, The Terminal List. That was my favorite show. The other one, the one I liked that I couldn't believe. You want the second one? Even though as product people, Maverick, and I'll tell you why. This movie Maverick, okay, you wouldn't think I'd be a Maverick guy, but the quality of this product, it was so high.
+> **Lenny Rachitsky** (01:43:59):
+> Yeah, exactly. Oh man, I'm stretching it. Okay, next question. You answered a few of these already, but do you have a favorite interview question that you like to ask when you're interviewing salespeople, especially?
 > 
-> **Jason Lemkin** (01:43:18):
-> And what's interesting, you remember Maverick was supposed to come out before COVID, right? And Tom Cruise said no. He's like, "This is such a good product, we're going to wait years for this thing to come out." I'm like, " I'm not going to like this. I mean, cocktail was pretty good, but I'm not going to..." But as a product, when... I've watched this movie three times from a product perspective and just like software, when something is done that well, no wasted calories, no... You see everything tied together. That's the kind of software we love, right? It just delights us when it works better than we expected. So, those are my two.
+> **Jason Lemkin** (01:44:09):
+> I answered it, but I'll bring it up again in case you do it again, is, "What do you want to do your first 14 days to head of product or head of sales? What do you want to do your first 14 days?" It's not a technical 30-day plan, you don't have to do 28 slides. It's what I call a Colombo question. Not that I really watch Colombo, but Colombo is this old detective on TV who, I don't know if you ever, he would ask these dumb questions, right? And then the murderer would thought Colombo was so dumb, but by the end of the episode he'd always incriminate himself because the question. So, when I interview, I always do Colombo questions. They're never tough ones, right? They're always nice. I don't know if I'm nice, I'm honest, but the interview [inaudible 01:44:42]. But Lenny, what would you do your first 14 days as VP of product here? And they don't want to visit customers. Don't hire them for either all sales or product. Just don't hire them.
 
 #### Sample Chunk 3 (Episode Tail / Outro Dialogue)
 - **Chunk Index:** 54 | **Token Count:** 290 | **Primary Speaker:** Lenny Rachitsky

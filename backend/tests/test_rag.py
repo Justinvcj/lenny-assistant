@@ -16,6 +16,7 @@ from app.rag.chunking import (
     chunk_turns,
     determine_primary_speaker,
     estimate_tokens,
+    split_long_turn,
     split_sentences,
 )
 
@@ -382,3 +383,154 @@ def test_tail_chunk_merging():
     chunks = chunk_turns(turns, min_tokens=10, max_tokens=100)
     assert len(chunks) == 1
     assert "Thanks for listening everyone. Bye!" in chunks[0].text
+
+
+# --- Regression Tests from Milestone 1 Review ---
+
+FIXTURE_BOM_PODCAST = (
+    "\ufeff---\n"
+    "title: \"BOM Handling Episode\"\n"
+    "guest: \"BOM Guest\"\n"
+    "date: \"2026-09-01\"\n"
+    "---\n\n"
+    "**Lenny Rachitsky** (00:00:00):\n"
+    "Welcome to the podcast.\n"
+)
+
+FIXTURE_REPEATING_SENTENCES = (
+    "This is a recurring phrase. " * 30
+)
+
+
+def _create_synthetic_turn(idx: int, tokens: int, speaker: str = "Guest") -> SpeakerTurn:
+    """Helper to generate a synthetic SpeakerTurn with predictable token sizing."""
+    words = " ".join([f"topic_{idx}_{w}" for w in range(int(tokens / 1.3))])
+    text = f"Turn {idx}. " + words + "."
+    return SpeakerTurn(
+        speaker=speaker,
+        timestamp=f"00:0{idx}:00",
+        text=text,
+        start_char=idx * 1000,
+        end_char=idx * 1000 + len(text),
+        turn_start_char=idx * 1000,
+        turn_end_char=(idx + 1) * 1000,
+        turn_index=idx,
+    )
+
+
+def test_regression_bom_handling():
+    """Ensure UTF-8 byte order mark does not cause frontmatter extraction to drop metadata."""
+    doc = parse_transcript_text(FIXTURE_BOM_PODCAST, slug="bom-episode")
+    assert doc.title == "BOM Handling Episode"
+    assert doc.guest == "BOM Guest"
+    assert len(doc.turns) == 1
+    assert doc.turns[0].speaker == "Lenny Rachitsky"
+
+
+def test_regression_quote_and_abbreviation_splitting():
+    """Ensure sentences ending or starting with quotation marks split cleanly, and abbreviations are preserved."""
+    # Dialogue quote at sentence end
+    text1 = 'He said, "This is the first sentence." Then he smiled. And she replied, "Yes indeed."'
+    sents1 = split_sentences(text1)
+    assert len(sents1) == 3
+    assert sents1[0] == 'He said, "This is the first sentence."'
+    assert sents1[1] == "Then he smiled."
+    assert sents1[2] == 'And she replied, "Yes indeed."'
+
+    # Dialogue quote at sentence start
+    text2 = 'First sentence completed. "Is this the next sentence?" asked Lenny.'
+    sents2 = split_sentences(text2)
+    assert len(sents2) == 2
+    assert sents2[0] == "First sentence completed."
+    assert sents2[1] == '"Is this the next sentence?" asked Lenny.'
+
+    # Smart / curly quotes
+    text3 = 'Lenny noted, “This works well.” Afterwards we left.'
+    sents3 = split_sentences(text3)
+    assert len(sents3) == 2
+    assert sents3[0] == "Lenny noted, “This works well.”"
+    assert sents3[1] == "Afterwards we left."
+
+    # Capitalized E.g. and I.e. followed by capitalized words
+    text4 = "We tested multiple options. E.g. Python was much faster than Ruby."
+    sents4 = split_sentences(text4)
+    assert len(sents4) == 2
+    assert sents4[0] == "We tested multiple options."
+    assert sents4[1] == "E.g. Python was much faster than Ruby."
+
+    text5 = "We need high performance. I.e. Go or Rust is preferred."
+    sents5 = split_sentences(text5)
+    assert len(sents5) == 2
+    assert sents5[0] == "We need high performance."
+    assert sents5[1] == "I.e. Go or Rust is preferred."
+
+    # Geographic / corporate abbreviations
+    text6 = "The U.S. Department of Justice investigated."
+    sents6 = split_sentences(text6)
+    assert len(sents6) == 1
+
+    text7 = "We partnered with Stripe Inc. Before the launch date."
+    sents7 = split_sentences(text7)
+    assert len(sents7) == 1
+
+
+def test_regression_repeating_sentences_offset_preservation():
+    """Ensure split_long_turn does not collapse offsets when identical sentences repeat."""
+    raw_text = FIXTURE_REPEATING_SENTENCES.strip()
+    turn = SpeakerTurn(
+        speaker="Guest",
+        timestamp="00:00:00",
+        text=raw_text,
+        start_char=50,
+        end_char=50 + len(raw_text),
+        turn_start_char=0,
+        turn_end_char=50 + len(raw_text),
+        turn_index=0,
+    )
+    sub_turns = split_long_turn(turn, max_tokens=60)
+    assert len(sub_turns) > 1
+
+    for idx, st in enumerate(sub_turns):
+        assert st.start_char < st.end_char
+        rel_start = st.start_char - turn.start_char
+        rel_end = st.end_char - turn.start_char
+        sliced = raw_text[rel_start:rel_end]
+        assert sliced == st.text, (
+            f"Subturn {idx} slice mismatch: sliced '{sliced}' ({len(sliced)} chars) vs "
+            f"expected '{st.text}' ({len(st.text)} chars)"
+        )
+
+
+def test_regression_consecutive_chunks_one_turn_overlap_and_no_redundant_subsets():
+    """Ensure 1-turn overlap is strictly maintained without zero-overlap breaks or redundant subset chunks."""
+    turns = [
+        _create_synthetic_turn(0, 100),
+        _create_synthetic_turn(1, 150),
+        _create_synthetic_turn(2, 332),  # Substantive turn (~330 tokens)
+        _create_synthetic_turn(3, 200),
+        _create_synthetic_turn(4, 200),
+    ]
+
+    chunks = chunk_turns(turns, min_tokens=350, max_tokens=450)
+    assert len(chunks) >= 2
+
+    # Invariant 1: Exactly 1-turn overlap across every adjacent pair
+    for k in range(len(chunks) - 1):
+        c1 = chunks[k]
+        c2 = chunks[k + 1]
+        s1 = set(t.start_char for t in c1.turns)
+        s2 = set(t.start_char for t in c2.turns)
+        overlap = s1.intersection(s2)
+        assert len(overlap) == 1, (
+            f"Zero or multiple overlap between Chunk {k} and {k+1}: got {len(overlap)} overlapping turns! "
+            f"Chunk {k} turns={[t.turn_index for t in c1.turns]}, Chunk {k+1} turns={[t.turn_index for t in c2.turns]}"
+        )
+
+    # Invariant 2: No chunk is a redundant subset of the immediately preceding chunk
+    for k in range(1, len(chunks)):
+        prev_s = set(t.start_char for t in chunks[k - 1].turns)
+        curr_s = set(t.start_char for t in chunks[k].turns)
+        assert not curr_s.issubset(prev_s), (
+            f"Chunk {k} (turns={[t.turn_index for t in chunks[k].turns]}) is a redundant subset of Chunk {k-1}"
+        )
+

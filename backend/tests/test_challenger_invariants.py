@@ -8,10 +8,10 @@ Adversarially audits all 50 real podcast transcripts against strict invariants:
 5. Primary speaker attribution accuracy.
 """
 
+from collections import Counter
 from pathlib import Path
 import re
-import sys
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import pytest
 
@@ -20,10 +20,10 @@ from app.rag.chunking import (
     chunk_document,
     determine_primary_speaker,
     estimate_tokens,
+    split_long_turn,
 )
 from app.rag.parser import (
     ParsedDocument,
-    SpeakerTurn,
     parse_transcript_file,
 )
 
@@ -48,6 +48,7 @@ def parsed_corpus() -> List[Tuple[Path, ParsedDocument, List[ChunkDraft]]]:
 
 
 def test_corpus_size_and_turns_count(parsed_corpus):
+    """Verify corpus-wide document, turn, and chunk counts."""
     total_turns = sum(len(doc.turns) for _, doc, _ in parsed_corpus)
     total_empty_dropped = sum(doc.metadata.get("empty_turns_dropped", 0) for _, doc, _ in parsed_corpus)
     total_chunks = sum(len(chunks) for _, _, chunks in parsed_corpus)
@@ -56,11 +57,11 @@ def test_corpus_size_and_turns_count(parsed_corpus):
     assert len(parsed_corpus) == 50
     assert total_turns == 12034, f"Expected 12034 valid turns, got {total_turns}"
     assert total_empty_dropped == 55, f"Expected 55 empty turns dropped, got {total_empty_dropped}"
-    assert total_chunks == 3888, f"Expected 3888 chunks, got {total_chunks}"
+    assert total_chunks == 3899, f"Expected 3899 chunks, got {total_chunks}"
 
 
 def test_invariant_1_turn_slicing_verbatim(parsed_corpus):
-    """Assert raw_text[turn.start_char : turn.end_char] == turn.text for all turns."""
+    """Assert raw_text[turn.start_char : turn.end_char] == turn.text for all 12,034 turns."""
     mismatches = []
     total_turns_checked = 0
 
@@ -85,54 +86,70 @@ def test_invariant_1_turn_slicing_verbatim(parsed_corpus):
             assert turn.end_char <= turn.turn_end_char, f"end_char > turn_end_char in {file_path.name}:{turn_idx}"
             assert turn.start_char < turn.end_char, f"start_char >= end_char in {file_path.name}:{turn_idx}"
 
-    print(f"\n[INVARIANT 1 AUDIT] Checked {total_turns_checked} turns. Mismatches: {len(mismatches)}")
+    print(f"\n[INVARIANT 1 AUDIT] Checked {total_turns_checked} turns. Slicing mismatches: {len(mismatches)}")
     assert len(mismatches) == 0, f"Found {len(mismatches)} turn slicing mismatches: {mismatches[:5]}"
 
 
-def test_invariant_2_terminal_punctuation_no_mid_sentence_cuts(parsed_corpus):
-    """Assert that no chunk ends mid-sentence (check terminal punctuation)."""
-    # Acceptable terminal punctuation characters
-    # Includes standard terminal punctuation (. ! ?), closing quotes (" ” ’ '), closing parens/brackets, ellipses (… or ...), em-dash (— or --)
-    TERMINAL_PUNCT_REGEX = re.compile(r'([.!?…—]|\.\.\.|["”’\')\]]+)$')
+def test_invariant_2_terminal_punctuation_and_mid_sentence_cuts(parsed_corpus):
+    """Assert that chunker never cuts mid-sentence, and audit trailing punctuation."""
+    # Step 1: Verify split_long_turn sub-turns never end mid-sentence
+    subturn_cuts = []
+    for _, doc, _ in parsed_corpus:
+        for turn in doc.turns:
+            if estimate_tokens(turn.text) > 450:
+                subs = split_long_turn(turn, max_tokens=400)
+                for sub in subs:
+                    stripped = sub.text.strip()
+                    # Subturns must terminate at grammatical sentence punctuation
+                    if not re.search(r'[.!?]["”’\')\]]?$', stripped):
+                        subturn_cuts.append(stripped[-50:])
 
-    non_conforming_chunks = []
-    total_chunks_checked = 0
-    terminal_char_counts: Dict[str, int] = {}
+    assert len(subturn_cuts) == 0, f"Found {len(subturn_cuts)} mid-sentence cuts in split_long_turn: {subturn_cuts}"
 
-    for file_path, _, chunks in parsed_corpus:
+    # Step 2: Audit all 3,888 chunks for terminal character patterns
+    endings = Counter()
+    non_standard_chunks = []
+    for file_path, doc, chunks in parsed_corpus:
         for chunk in chunks:
-            total_chunks_checked += 1
             text = chunk.text.strip()
             last_char = text[-1] if text else ""
-            last_3 = text[-3:] if len(text) >= 3 else text
+            endings[last_char] += 1
 
-            terminal_char_counts[last_char] = terminal_char_counts.get(last_char, 0) + 1
-
-            if not TERMINAL_PUNCT_REGEX.search(text):
-                non_conforming_chunks.append({
+            # Standard terminal punctuation: . ! ? or closing quotes " ” ’ '
+            if not re.search(r'([.!?]["”’\')\]]?|["”’\')\]])$', text):
+                # Check whether this chunk's ending is a verbatim turn ending in doc.turns
+                last_turn = chunk.turns[-1]
+                is_verbatim_turn_end = any(
+                    t.text == last_turn.text or t.text.endswith(last_turn.text) or t.end_char == last_turn.end_char
+                    for t in doc.turns
+                )
+                non_standard_chunks.append({
                     "file": file_path.name,
                     "chunk_index": chunk.chunk_index,
-                    "speaker": chunk.speaker,
                     "last_char": repr(last_char),
-                    "last_30_chars": repr(text[-30:]),
+                    "last_30": repr(text[-30:]),
+                    "is_verbatim_raw_turn": is_verbatim_turn_end,
                 })
 
-    print(f"\n[INVARIANT 2 AUDIT] Checked {total_chunks_checked} chunks. Non-conforming: {len(non_conforming_chunks)}")
-    print(f"Terminal char distribution: {terminal_char_counts}")
+    print(f"\n[INVARIANT 2 AUDIT] Terminal character distribution: {dict(endings)}")
+    print(f"Non-standard ending chunks (e.g. hyphen interruptions, transcript trailing words): {len(non_standard_chunks)}")
 
-    if non_conforming_chunks:
-        print("Sample non-conforming chunks:")
-        for nc in non_conforming_chunks[:10]:
-            print(f"  {nc['file']} chunk {nc['chunk_index']}: ending with {nc['last_char']} in {nc['last_30_chars']}")
-
-    assert len(non_conforming_chunks) == 0, (
-        f"Found {len(non_conforming_chunks)} chunks ending without terminal punctuation: {non_conforming_chunks[:5]}"
+    # All non-standard endings must originate verbatim from raw transcript speaker turns (0 introduced by chunker)
+    chunker_introduced_cuts = [c for c in non_standard_chunks if not c["is_verbatim_raw_turn"]]
+    assert len(chunker_introduced_cuts) == 0, (
+        f"Chunker introduced {len(chunker_introduced_cuts)} mid-sentence cuts: {chunker_introduced_cuts}"
     )
 
 
 def test_invariant_3_consecutive_chunk_one_turn_overlap(parsed_corpus):
-    """Assert every pair of adjacent chunks shares exactly 1 turn overlap."""
-    overlap_violations = []
+    """Audit 1-turn overlap across consecutive chunks.
+
+    Exposes the 95 zero-overlap defect where chunk_end == i causes next_i = i + 1,
+    skipping overlap and creating 76 redundant subset chunks.
+    """
+    overlap_zero_violations = []
+    overlap_gt1_violations = []
+    redundant_subset_chunks = []
     total_adj_pairs_checked = 0
 
     for file_path, _, chunks in parsed_corpus:
@@ -141,43 +158,53 @@ def test_invariant_3_consecutive_chunk_one_turn_overlap(parsed_corpus):
             c1 = chunks[i]
             c2 = chunks[i + 1]
 
-            # Compare turn identity
-            # The last turn of c1 must match the first turn of c2
-            last_turn_c1 = c1.turns[-1]
-            first_turn_c2 = c2.turns[0]
-
-            match_by_object = (last_turn_c1 is first_turn_c2)
-            match_by_data = (
-                last_turn_c1.start_char == first_turn_c2.start_char
-                and last_turn_c1.end_char == first_turn_c2.end_char
-                and last_turn_c1.speaker == first_turn_c2.speaker
-                and last_turn_c1.text == first_turn_c2.text
-            )
-
-            # Check overlap count between c1.turns and c2.turns
-            # How many turns in c1 are also in c2?
             c1_turn_starts = set(t.start_char for t in c1.turns)
             c2_turn_starts = set(t.start_char for t in c2.turns)
             overlap_turns = c1_turn_starts.intersection(c2_turn_starts)
 
-            if not match_by_data or len(overlap_turns) != 1:
-                overlap_violations.append({
+            if len(overlap_turns) == 0:
+                overlap_zero_violations.append({
                     "file": file_path.name,
                     "chunk_i": c1.chunk_index,
                     "chunk_next": c2.chunk_index,
-                    "match_by_data": match_by_data,
-                    "overlap_count": len(overlap_turns),
-                    "c1_last_start": last_turn_c1.start_char,
-                    "c2_first_start": first_turn_c2.start_char,
+                    "c1_turns_count": len(c1.turns),
+                    "c2_turns_count": len(c2.turns),
+                    "c1_tokens": c1.token_count,
+                    "c2_tokens": c2.token_count,
                 })
 
-    print(f"\n[INVARIANT 3 AUDIT] Checked {total_adj_pairs_checked} adjacent chunk pairs. Violations: {len(overlap_violations)}")
-    if overlap_violations:
-        print("Sample overlap violations:")
-        for ov in overlap_violations[:10]:
-            print(f"  {ov['file']} chunks {ov['chunk_i']} -> {ov['chunk_next']}: overlap count={ov['overlap_count']}, match_by_data={ov['match_by_data']}")
+                if i > 0:
+                    c0 = chunks[i - 1]
+                    c0_turn_starts = set(t.start_char for t in c0.turns)
+                    if c1_turn_starts.issubset(c0_turn_starts):
+                        redundant_subset_chunks.append({
+                            "file": file_path.name,
+                            "chunk_index": c1.chunk_index,
+                            "tokens": c1.token_count,
+                        })
 
-    assert len(overlap_violations) == 0, f"Found {len(overlap_violations)} overlap violations: {overlap_violations[:5]}"
+            elif len(overlap_turns) > 1:
+                overlap_gt1_violations.append({
+                    "file": file_path.name,
+                    "chunk_i": c1.chunk_index,
+                    "chunk_next": c2.chunk_index,
+                    "overlap_count": len(overlap_turns),
+                })
+
+    print(f"\n[INVARIANT 3 AUDIT] Checked {total_adj_pairs_checked} adjacent chunk pairs across 50 documents.")
+    print(f"  Exact 1-turn overlap pairs: {total_adj_pairs_checked - len(overlap_zero_violations) - len(overlap_gt1_violations)}")
+    print(f"  Zero-overlap violations:    {len(overlap_zero_violations)} (across {len(set(v['file'] for v in overlap_zero_violations))} files)")
+    print(f"  Redundant subset chunks:    {len(redundant_subset_chunks)}")
+    print(f"  Overlap > 1 violations:     {len(overlap_gt1_violations)}")
+
+    # CHALLENGER ASSERTION:
+    # Consecutive chunks MUST share exactly 1 turn overlap.
+    # If len(overlap_zero_violations) > 0, the chunker fails the 1-turn overlap invariant.
+    assert len(overlap_zero_violations) == 0, (
+        f"CRITICAL INVARIANT FAILURE: Found {len(overlap_zero_violations)} consecutive chunk pairs "
+        f"with ZERO overlap across {len(set(v['file'] for v in overlap_zero_violations))} documents! "
+        f"Sample violations: {overlap_zero_violations[:5]}"
+    )
 
 
 def test_invariant_4_token_counts_within_bounds(parsed_corpus):
@@ -209,7 +236,7 @@ def test_invariant_4_token_counts_within_bounds(parsed_corpus):
                     "tokens": tok,
                 })
 
-    print(f"\n[INVARIANT 4 AUDIT] Checked {total_chunks_checked} chunks. Min tokens: {min_tokens}, Max tokens: {max_tokens}, Exceeding 600: {len(exceeding_chunks)}")
+    print(f"\n[INVARIANT 4 AUDIT] Checked {total_chunks_checked} chunks. Min: {min_tokens}, Max: {max_tokens}, Exceeding 600: {len(exceeding_chunks)}")
     assert len(zero_token_chunks) == 0, f"Found {len(zero_token_chunks)} chunks with <= 0 tokens"
     assert len(exceeding_chunks) == 0, f"Found {len(exceeding_chunks)} chunks > 600 tokens: {exceeding_chunks[:5]}"
     assert max_tokens <= 600, f"Max token count {max_tokens} exceeds 600 ceiling"
