@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     )
 
     # LLM & Embedding Settings
-    llM_provider: str = "ollama"
+    llm_provider: str = "ollama"
     llm_model: str = "qwen2.5:7b"
     ollama_base_url: str = "http://host.docker.internal:11434"
     embedding_model: str = "nomic-embed-text"
