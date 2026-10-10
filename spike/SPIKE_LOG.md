@@ -27,3 +27,156 @@ AssistantMessage(content=[TextBlock(text='According to Episode 12 with Guest A, 
 ResultMessage(subtype='success', duration_ms=14087, duration_api_ms=23895, is_error=False, num_turns=2, session_id='3c51fb8f-15e4-443a-aeeb-53f23e8bb938', stop_reason='end_turn', total_cost_usd=0.0078622, usage={'input_tokens': 716, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 329, 'output_tokens': 86, 'output_tokens_details': {'thinking_tokens': 0}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 0, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': '', 'iterations': [], 'speed': 'standard', 'fallback_credit': None}, result='According to Episode 12 with Guest A, retention is heavily driven by activation within the first week. This suggests that in the initial days after onboarding, users who engage with your product or service in meaningful ways are more likely to continue using it in the long term.', structured_output=None, model_usage={'qwen2.5:7b': {'inputTokens': 1458, 'outputTokens': 98, 'cacheReadInputTokens': 351, 'cacheCreationInputTokens': 0, 'webSearchRequests': 0, 'costUSD': 0.0078622, 'contextWindow': 200000, 'maxOutputTokens': 32000, 'thinkingTokens': 0, 'canonicalModel': 'qwen2.5:7b', 'provider': 'firstParty', 'costBasis': 'unknown'}}, permission_denials=[], deferred_tool_use=None, errors=None, api_error_status=None, uuid='48ecccd3-ec71-4d6e-932d-4c1419c416a5', terminal_reason='completed', origin=None)
 
 Total seconds: 15.2
+
+
+
+
+
+
+Reliability test: 22/25 tool calls, 10/10 refusals, 2 reversed claims
+
+
+run 1
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is driven by retention, according to the information from Episode 12 (Guest A).
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast mentions that retention is driven by activation within the first week in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 5/5
+
+run 2
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is driven by retention, according to Guest A in Episode 12.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast mentions that retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 5/5
+
+run 3
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is crucial according to Episode 12 with Guest A, as it drives retention.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast Episode 12 (Guest A) states that retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5
+
+run 4
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: In Episode 12 (Guest A), it was mentioned that retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: In Episode 12 (Guest A), retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to the information from Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5
+
+run 5
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: According to Episode 12 with Guest A, retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5
