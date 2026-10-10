@@ -7,3 +7,5 @@ notes/
 *.pyc
 .DS_Store
 .agents/
+ORIGINAL_REQUEST.md
+prompt_draft.md
