@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # RAG & Agent Settings
     retrieval_top_k: int = 6
-    retrieval_min_score: float = 0.5
+    retrieval_min_score: float = 0.58
     history_turns: int = 6
     agent_timeout_s: int = 120
     artifact_max_bytes: int = 200000

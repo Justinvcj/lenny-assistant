@@ -18,6 +18,8 @@ from app.errors import (
 )
 from app.routers.health import router as health_router
 from app.routers.sessions import router as sessions_router
+from app.routers.chat import router as chat_router
+from app.routers.artifacts import router as artifacts_router
 
 settings = get_settings()
 setup_logging(settings.log_level)
@@ -73,3 +75,5 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 # Routers
 app.include_router(health_router)
 app.include_router(sessions_router)
+app.include_router(chat_router)
+app.include_router(artifacts_router)

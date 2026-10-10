@@ -23,11 +23,11 @@ class Intent(str, enum.Enum):
 
 # 1. Negation patterns (prevent false positives when user explicitly opts out)
 RE_NEGATION_ESSAY = re.compile(
-    r"\b(?:don't|do\s+not|never|no|without|not)\s+(?:write|draft|make|generate|create)?\s*(?:an?\s+)?(?:essay|article|post|ship\s*30)\b",
+    r"\b(?:don't|do\s+not|never|no|without|not)\s+(?:writing|write|drafting|draft|making|make|generating|generate|creating|create)?\s*(?:an?\s+)?(?:essay|article|post|ship\s*30)\b",
     re.IGNORECASE,
 )
 RE_NEGATION_ARTIFACT = re.compile(
-    r"\b(?:don't|do\s+not|never|no|without|not)\s+(?:create|make|give|show|render)?\s*(?:an?\s+)?(?:html|table|checklist|artifact|one-?pager|page|doc)\b",
+    r"\b(?:don't|do\s+not|never|no|without|not)\s+(?:creating|create|making|make|giving|give|showing|show|rendering|render|generating|generate)?\s*(?:an?\s+)?(?:html(?:\s+page)?|table|checklist|artifact|one-?pager|page|doc)\b",
     re.IGNORECASE,
 )
 
