@@ -94,7 +94,25 @@ describe('MessageItem Component', () => {
     expect(container.querySelector('.sources-accordion')).toBeNull();
   });
 
-  it('triggers onCitationClick when inline [S#] chip is clicked', async () => {
+  it('routes to RefusalCard when content matches EXACT_REFUSAL_MESSAGE with or without trailing period/whitespace', () => {
+    const refusalWithoutPeriod: Message = {
+      id: 'm4-no-period',
+      session_id: 's1',
+      role: 'assistant',
+      content: "I don't have information about that in the transcripts  ",
+      citations: [],
+      tool_trace: [],
+      degraded: false,
+      created_at: '2026-10-10T12:00:05Z',
+    };
+
+    const { container } = render(<MessageItem message={refusalWithoutPeriod} />);
+    expect(screen.getByText(/I don't have information about that in the transcripts/i)).toBeInTheDocument();
+    expect(container.querySelector('.refusal-card')).toBeInTheDocument();
+    expect(container.querySelector('.sources-accordion')).toBeNull();
+  });
+
+  it('triggers onCitationClick and expands sources accordion when inline [S#] chip is clicked', async () => {
     const user = userEvent.setup();
     const handleCitationClick = vi.fn();
 
@@ -110,7 +128,7 @@ describe('MessageItem Component', () => {
           doc_slug: 'podcast-elena',
           title: 'PLG',
           guest: 'Elena Verna',
-          passage: 'PLG passage.',
+          passage: 'PLG passage about retention.',
         },
       ],
       tool_trace: [],
@@ -120,9 +138,14 @@ describe('MessageItem Component', () => {
 
     render(<MessageItem message={assistantMsg} onCitationClick={handleCitationClick} />);
 
+    // Initially accordion is collapsed
+    expect(screen.queryByText('PLG passage about retention.')).not.toBeInTheDocument();
+
     const inlineChip = screen.getByRole('button', { name: /Jump to source S1/i });
     await user.click(inlineChip);
 
     expect(handleCitationClick).toHaveBeenCalledWith(1);
+    // After clicking inline [S1], sources accordion should expand and show the passage
+    expect(await screen.findByText('PLG passage about retention.')).toBeInTheDocument();
   });
 });

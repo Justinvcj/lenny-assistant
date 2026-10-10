@@ -11,7 +11,6 @@ import {
   Session,
   Message,
   ArtifactResponse,
-  ApiError,
 } from './api';
 
 import { Header } from './components/Header';
@@ -20,7 +19,7 @@ import { ArtifactPanel } from './components/ArtifactPanel';
 import { ChatArea } from './components/ChatArea';
 import { Composer } from './components/Composer';
 import { LoadingSkeleton } from './components/LoadingSkeleton';
-import { ErrorBanner } from './components/ErrorBanner';
+import { ErrorBanner, formatFriendlyErrorMessage } from './components/ErrorBanner';
 
 export const App: React.FC = () => {
   // Global & Session State
@@ -156,9 +155,10 @@ export const App: React.FC = () => {
       const detail = await getSession(sessionId);
       setMessages(detail.messages || []);
     } catch (err: any) {
+      const formatted = formatFriendlyErrorMessage(err);
       setError({
-        message: err?.message || 'Failed to load conversation history.',
-        requestId: err?.requestId,
+        message: formatted.message,
+        requestId: formatted.requestId,
       });
     } finally {
       setIsLoadingSession(false);
@@ -199,9 +199,10 @@ export const App: React.FC = () => {
         }
       }
     } catch (err: any) {
+      const formatted = formatFriendlyErrorMessage(err);
       setError({
-        message: err?.message || 'Failed to delete session.',
-        requestId: err?.requestId,
+        message: formatted.message,
+        requestId: formatted.requestId,
       });
     }
   };
@@ -267,9 +268,10 @@ export const App: React.FC = () => {
       } else {
         // Show error banner and remove pending message
         setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
+        const formatted = formatFriendlyErrorMessage(err);
         setError({
-          message: err?.message || 'Failed to generate response.',
-          requestId: err instanceof ApiError ? err.requestId : null,
+          message: formatted.message,
+          requestId: formatted.requestId,
           prompt: trimmed,
         });
       }
@@ -302,6 +304,13 @@ export const App: React.FC = () => {
       handleSendMessage(promptToRetry);
     }
   };
+
+  // -------------------------------------------------------------------------
+  // 10. Citation Click Handler
+  // -------------------------------------------------------------------------
+  const handleCitationClick = useCallback((_citationNumber: number) => {
+    // Handled in coordination with MessageItem and CitationChips accordion
+  }, []);
 
   return (
     <div className="app-shell">
@@ -340,6 +349,7 @@ export const App: React.FC = () => {
         <ChatArea
           messages={messages}
           isLoading={isSending || isLoadingSession}
+          onCitationClick={handleCitationClick}
           loadingNode={
             isSending ? (
               <LoadingSkeleton

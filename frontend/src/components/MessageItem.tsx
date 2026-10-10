@@ -12,6 +12,11 @@ export const formatLatency = (latencyMs?: number | null): string => {
   return `${(latencyMs / 1000).toFixed(1)}s`;
 };
 
+export const isRefusalContent = (content: string): boolean => {
+  if (!content) return false;
+  return content.trim().replace(/\.$/, '') === EXACT_REFUSAL_MESSAGE.replace(/\.$/, '');
+};
+
 export interface MessageItemProps {
   message: Message;
   onCitationClick?: (citationNumber: number) => void;
@@ -22,7 +27,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onCitationClick,
 }) => {
   const isUser = message.role === 'user';
-  const isRefusal = !isUser && message.content.trim() === EXACT_REFUSAL_MESSAGE;
+  const isRefusal = !isUser && isRefusalContent(message.content);
+  const [activeCitation, setActiveCitation] = React.useState<number | null>(null);
+
+  const handleInlineCitationClick = React.useCallback((citationNum: number) => {
+    setActiveCitation(null);
+    setTimeout(() => {
+      setActiveCitation(citationNum);
+    }, 0);
+    if (onCitationClick) {
+      onCitationClick(citationNum);
+    }
+  }, [onCitationClick]);
 
   // Transform [S1] -> [S1](#source-1) for inline interactive chip rendering
   const processedContent = useMemo(() => {
@@ -100,7 +116,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                     <button
                       type="button"
                       className="citation-chip"
-                      onClick={() => onCitationClick && onCitationClick(citationNum)}
+                      onClick={() => handleInlineCitationClick(citationNum)}
                       aria-label={`Jump to source S${citationNum}`}
                     >
                       {children}
@@ -135,6 +151,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           <CitationChips
             citations={message.citations}
             messageId={message.id}
+            activeCitationNumber={activeCitation}
             onCitationSelect={onCitationClick}
           />
         )}

@@ -42,6 +42,7 @@ export interface CitationChipsProps {
   messageId?: string;
   onCitationSelect?: (citationNumber: number) => void;
   initialExpanded?: boolean;
+  activeCitationNumber?: number | null;
 }
 
 export const CitationChips: React.FC<CitationChipsProps> = ({
@@ -49,6 +50,7 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
   messageId = 'msg',
   onCitationSelect,
   initialExpanded = false,
+  activeCitationNumber,
 }) => {
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
@@ -78,6 +80,7 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
           behavior: prefersReducedMotion ? 'auto' : 'smooth',
           block: 'nearest',
         });
+        element.focus?.();
       }
     }, 50);
 
@@ -88,6 +91,12 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
       setHighlightedId(null);
     }, 3000);
   }, [messageId, onCitationSelect]);
+
+  useEffect(() => {
+    if (activeCitationNumber !== undefined && activeCitationNumber !== null) {
+      handleChipClick(activeCitationNumber);
+    }
+  }, [activeCitationNumber, handleChipClick]);
 
   useEffect(() => {
     return () => {
