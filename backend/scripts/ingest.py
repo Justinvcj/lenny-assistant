@@ -5,13 +5,14 @@ Usage:
     python -m scripts.ingest --limit 5
     python -m scripts.ingest --dry-run
     python -m scripts.ingest --force --batch-size 16
+    python -m scripts.ingest --reset
 """
 
 import argparse
 import asyncio
 import logging
-import sys
 from pathlib import Path
+import sys
 
 # Ensure backend root is on sys.path for direct module execution
 backend_dir = Path(__file__).resolve().parent.parent
@@ -68,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Parse and chunk without database writes or embedding API calls.",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Delete documents and chunks not present in the current source.",
+    )
     return parser.parse_args()
 
 
@@ -90,6 +96,7 @@ async def main_async(args: argparse.Namespace) -> int:
     print(f"Batch Size       : {args.batch_size}")
     print(f"Force Re-index   : {args.force}")
     print(f"Dry Run Mode     : {args.dry_run}")
+    print(f"Reset / Prune    : {args.reset}")
     if args.limit:
         print(f"Limit Processing : First {args.limit} documents")
     print("=" * 65)
@@ -129,6 +136,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 batch_size=args.batch_size,
                 force=args.force,
                 dry_run=args.dry_run,
+                reset=args.reset,
                 on_progress=progress_callback,
             )
 
@@ -139,6 +147,8 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"Documents Created      : {stats.created_docs}")
         print(f"Documents Updated      : {stats.updated_docs}")
         print(f"Documents Skipped      : {stats.skipped_docs}")
+        if args.reset:
+            print(f"Documents Pruned       : {stats.pruned_docs}")
         print(f"Total Chunks Processed : {stats.total_chunks}")
         print(f"Total Estimated Tokens : {stats.total_tokens:,}")
         print(f"Elapsed Time           : {stats.elapsed_seconds:.2f} s")
@@ -156,6 +166,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     args = parse_args()
     exit_code = asyncio.run(main_async(args))
     sys.exit(exit_code)
@@ -163,3 +175,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

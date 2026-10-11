@@ -284,3 +284,38 @@ async def test_ingest_transcripts_rollback_on_document_error(tmp_path: Path):
     assert "valid.md" in stats.errors[0]["file"]
     assert "Embedding hardware fault" in stats.errors[0]["error"]
     assert mock_db.rollback.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_transcripts_reset_flag(tmp_path: Path):
+    # Only alice exists in source directory
+    (tmp_path / "alice.md").write_text(FIXTURE_MARKDOWN_1, encoding="utf-8")
+
+    mock_db = AsyncMock()
+    mock_slug_res = MagicMock()
+    mock_slug_res.scalars.return_value.all.return_value = ["alice", "stale_old_episode"]
+    mock_doc_res = MagicMock()
+    mock_doc_res.scalar_one_or_none.return_value = None
+
+    async def mock_execute(stmt, *args, **kwargs):
+        stmt_str = str(stmt).lower()
+        if "select documents.slug" in stmt_str:
+            return mock_slug_res
+        if "select documents." in stmt_str:
+            return mock_doc_res
+        return MagicMock()
+
+    mock_db.execute.side_effect = mock_execute
+
+    embedder = FakeEmbeddingsClient(dim=768)
+
+    stats: IngestionStats = await ingest_transcripts(
+        source_dir=tmp_path,
+        db=mock_db,
+        embedder=embedder,
+        reset=True,
+    )
+
+    assert stats.pruned_docs == 1
+    assert stats.created_docs == 1
+

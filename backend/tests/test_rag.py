@@ -7,7 +7,10 @@ from app.models import Chunk, Document
 from app.rag.parser import (
     SpeakerTurn,
     compute_content_hash,
+    derive_slug,
+    is_episode_file,
     parse_transcript,
+    parse_transcript_file,
     parse_transcript_text,
 )
 from app.rag.chunking import (
@@ -533,4 +536,145 @@ def test_regression_consecutive_chunks_one_turn_overlap_and_no_redundant_subsets
         assert not curr_s.issubset(prev_s), (
             f"Chunk {k} (turns={[t.turn_index for t in chunks[k].turns]}) is a redundant subset of Chunk {k-1}"
         )
+
+
+# --- ChatPRD Real Corpus Format Fixtures & Tests ---
+
+FIXTURE_CHATPRD_REAL_STANDARD = """---
+guest: Ada Chen Rekhi
+title: Feeling stuck? Here's how to know when it's time to leave your job | Ada Chen Rekhi
+youtube_url: https://www.youtube.com/watch?v=l-T8sNRcWQk
+video_id: l-T8sNRcWQk
+publish_date: 2023-04-21
+description: 'Ada Chen Rekhi explains when it is time to leave your job.'
+duration_seconds: 230.0
+duration: '3:50'
+view_count: 1936
+channel: Lenny's Podcast
+keywords:
+- career
+- leadership
+- decision making
+---
+
+# Feeling stuck? Here's how to know when it's time to leave your job | Ada Chen Rekhi
+
+## Transcript
+
+Ada Chen Rekhi (00:00:00):
+It's a terrible outcome to wake up one day and be late career and feel trapped.
+
+Lenny (00:00:36):
+Welcome to Lenny's Podcast, where I interview world-class product leaders. Today my guest is Ada Chen Rekhi.
+
+(00:01:21):
+We do a live exercise around my own personal values. She shares a bunch of advice.
+"""
+
+FIXTURE_CHATPRD_REAL_BRACKETED = """---
+guest: Ryan Hoover
+title: A better way to plan, build, and ship products | Ryan Hoover
+youtube_url: https://www.youtube.com/watch?v=GF-yUANql0c
+video_id: GF-yUANql0c
+publish_date: 2025-03-30
+duration_seconds: 6310.0
+channel: Lenny's Podcast
+keywords:
+- growth
+---
+
+[00:00:00] Ryan: I don't know how to articulate that feeling of anxiety and stress.
+[00:00:28] Lenny: Ryan Hoover is the founder of Product Hunt, which you already know.
+[00:00:52] Ryan: Hey Lenny, thanks for having me on the show.
+"""
+
+FIXTURE_CHATPRD_REAL_COLON = """---
+guest: Adriel Frederick
+title: Humanizing product development | Adriel Frederick
+youtube_url: https://www.youtube.com/watch?v=uMhBej6-Ey4
+video_id: uMhBej6-Ey4
+publish_date: 2022-10-20
+duration_seconds: 4046.0
+channel: Lenny's Podcast
+keywords:
+- product
+---
+
+Adriel Frederick:
+There are probably techno utopians who would say, feed all data to the algorithm.
+
+Lenny:
+Welcome to Lenny's Podcast. Today my guest is Adriel Frederick.
+"""
+
+
+def test_chatprd_standard_format_parsing():
+    doc = parse_transcript_text(
+        FIXTURE_CHATPRD_REAL_STANDARD,
+        source_path="data/lenny-chatprd/episodes/ada-chen-rekhi/transcript.md",
+    )
+    assert doc.slug == "ada-chen-rekhi"
+    assert doc.title == "Feeling stuck? Here's how to know when it's time to leave your job | Ada Chen Rekhi"
+    assert doc.guest == "Ada Chen Rekhi"
+    assert doc.published_at == date(2023, 4, 21)
+    assert doc.metadata["youtube_url"] == "https://www.youtube.com/watch?v=l-T8sNRcWQk"
+    assert doc.metadata["video_id"] == "l-T8sNRcWQk"
+    assert doc.metadata["duration"] == "3:50"
+    assert doc.metadata["channel"] == "Lenny's Podcast"
+
+    # Turns: Ada Chen Rekhi, Lenny Rachitsky, and continuation turn inheriting Lenny
+    assert len(doc.turns) == 3
+    assert doc.turns[0].speaker == "Ada Chen Rekhi"
+    assert doc.turns[0].timestamp == "00:00:00"
+    assert doc.turns[1].speaker == "Lenny Rachitsky"
+    assert doc.turns[1].timestamp == "00:00:36"
+    assert doc.turns[2].speaker == "Lenny Rachitsky"  # Inherits previous speaker
+    assert doc.turns[2].timestamp == "00:01:21"
+
+
+def test_chatprd_bracketed_format_parsing():
+    doc = parse_transcript_text(
+        FIXTURE_CHATPRD_REAL_BRACKETED,
+        source_path="data/lenny-chatprd/episodes/ryan-hoover/transcript.md",
+    )
+    assert doc.slug == "ryan-hoover"
+    assert doc.guest == "Ryan Hoover"
+    assert doc.published_at == date(2025, 3, 30)
+    assert len(doc.turns) == 3
+    assert doc.turns[0].speaker == "Ryan"
+    assert doc.turns[0].timestamp == "00:00:00"
+    assert doc.turns[1].speaker == "Lenny Rachitsky"
+    assert doc.turns[1].timestamp == "00:00:28"
+
+
+def test_chatprd_colon_format_parsing():
+    doc = parse_transcript_text(
+        FIXTURE_CHATPRD_REAL_COLON,
+        source_path="data/lenny-chatprd/episodes/adriel-frederick/transcript.md",
+    )
+    assert doc.slug == "adriel-frederick"
+    assert doc.guest == "Adriel Frederick"
+    assert len(doc.turns) == 2
+    assert doc.turns[0].speaker == "Adriel Frederick"
+    assert doc.turns[1].speaker == "Lenny Rachitsky"
+
+
+def test_non_episode_filtering():
+    assert is_episode_file("data/lenny-chatprd/episodes/teaser_2021/transcript.md", {"guest": "Teaser_2021"}) is False
+    assert is_episode_file("data/lenny-chatprd/episodes/teaser_2021/transcript.md", {"guest": "Teaser_2021", "title": ""}) is False
+    assert is_episode_file("data/lenny-chatprd/index/README.md") is False
+    assert is_episode_file("data/lenny-chatprd/index/product-management.md") is False
+    assert is_episode_file("data/lenny-chatprd/CLAUDE.md") is False
+    assert is_episode_file(
+        "data/lenny-chatprd/episodes/ada-chen-rekhi/transcript.md",
+        {"guest": "Ada Chen Rekhi", "title": "Feeling stuck?"},
+    ) is True
+
+
+def test_stable_slug_generation():
+    assert derive_slug("data/lenny-chatprd/episodes/brian-chesky/transcript.md") == "brian-chesky"
+    assert derive_slug("data/lenny-chatprd/episodes/ada-chen-rekhi/transcript.md") == "ada-chen-rekhi"
+    assert derive_slug("data/podcasts/molly-graham.md") == "molly-graham"
+    assert derive_slug("data/podcasts/brian-chesky-2.md") == "brian-chesky-2"
+
 

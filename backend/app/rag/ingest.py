@@ -2,11 +2,10 @@
 
 import inspect
 import logging
-import time
-import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
+import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import uuid
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,9 +14,17 @@ from app.config import get_settings
 from app.models import Chunk, Document, utc_now
 from app.rag.chunking import ChunkDraft, chunk_document
 from app.rag.embeddings import get_embeddings_client
-from app.rag.parser import ParsedDocument, parse_transcript_file
+from app.rag.parser import (
+    ParsedDocument,
+    derive_slug,
+    is_episode_file,
+    parse_transcript_file,
+)
 
 logger = logging.getLogger(__name__)
+
+
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -28,6 +35,7 @@ class IngestionStats:
     created_docs: int = 0
     updated_docs: int = 0
     skipped_docs: int = 0
+    pruned_docs: int = 0
     total_chunks: int = 0
     total_tokens: int = 0
     errors: List[Dict[str, str]] = field(default_factory=list)
@@ -47,35 +55,39 @@ def resolve_data_dir(data_dir_arg: Optional[str] = None) -> Path:
     if data_dir_arg:
         candidates.append(Path(data_dir_arg))
 
-    # Docker container volume mount
-    if settings.data_dir:
-        candidates.append(Path(settings.data_dir))
-        candidates.append(Path(settings.data_dir) / "lenny-source" / "podcasts")
-        candidates.append(Path(settings.data_dir) / "podcasts")
-
-    # Local host repo root candidates
+    # Docker container volume mount and host paths
     cwd = Path.cwd()
     candidates.extend(
         [
+            Path(settings.data_dir) / "lenny-chatprd" / "episodes",
+            Path(settings.data_dir) / "lenny-chatprd",
+            Path(settings.data_dir) / "episodes",
+            Path(settings.data_dir),
+            cwd / "data" / "lenny-chatprd" / "episodes",
+            cwd / "data" / "lenny-chatprd",
+            cwd / "data" / "episodes",
+            cwd / "data",
+            cwd.parent / "data" / "lenny-chatprd" / "episodes",
+            cwd.parent / "data" / "lenny-chatprd",
+            cwd.parent / "data" / "episodes",
+            cwd.parent / "data",
+            # Legacy paths fallback
+            Path(settings.data_dir) / "lenny-source" / "podcasts",
             cwd / "data" / "lenny-source" / "podcasts",
             cwd / "data" / "lenny-source",
-            cwd / "data" / "podcasts",
-            cwd / "data",
             cwd.parent / "data" / "lenny-source" / "podcasts",
-            cwd.parent / "data" / "lenny-source",
-            cwd.parent / "data",
         ]
     )
 
     for cand in candidates:
         if cand.is_dir():
-            # Check if this dir or its podcasts subdir contains .md files
+            if (cand / "episodes").is_dir() and any((cand / "episodes").rglob("*.md")):
+                return cand / "episodes"
             if (cand / "podcasts").is_dir() and any((cand / "podcasts").glob("*.md")):
                 return cand / "podcasts"
-            if any(cand.glob("*.md")):
+            if any(cand.rglob("*.md")):
                 return cand
 
-    # Default fallback
     return Path(data_dir_arg or settings.data_dir)
 
 
@@ -97,7 +109,6 @@ async def _get_embeddings_for_chunks(
             chunk_texts, is_query=False, batch_size=batch_size
         )
     else:
-        # Fallback to single calls
         return [client.get_embedding(t, is_query=False) for t in chunk_texts]
 
 
@@ -125,15 +136,15 @@ async def ingest_document(
     if inspect.isawaitable(existing_doc):
         existing_doc = await existing_doc
 
-    # 2. Idempotency check: unchanged file
+    # 2. Idempotency check: unchanged file with existing chunks
     if existing_doc is not None and not force and existing_doc.content_hash == parsed.content_hash:
-        # Count existing chunks
         cnt_stmt = select(func.count(Chunk.id)).where(Chunk.document_id == existing_doc.id)
         cnt_res = await db.execute(cnt_stmt)
         existing_chunk_count = cnt_res.scalar() or 0
         if inspect.isawaitable(existing_chunk_count):
             existing_chunk_count = await existing_chunk_count
-        return ("skipped", int(existing_chunk_count), 0)
+        if int(existing_chunk_count) > 0:
+            return ("skipped", int(existing_chunk_count), 0)
 
     # 3. Chunk the parsed document
     target_doc_id = existing_doc.id if existing_doc is not None else uuid.uuid4()
@@ -189,6 +200,7 @@ async def ingest_transcripts(
     batch_size: int = 32,
     force: bool = False,
     dry_run: bool = False,
+    reset: bool = False,
     on_progress: Optional[Callable[[int, int, str, str, int], None]] = None,
 ) -> IngestionStats:
     """Ingest all transcript files in source_dir with progress tracking and idempotency."""
@@ -200,19 +212,42 @@ async def ingest_transcripts(
         stats.errors.append({"file": str(dir_path), "error": "Source directory does not exist"})
         return stats
 
-    # Collect markdown files, preferring podcasts folder if present
+    # Prefer episodes subfolder if present
     target_dir = dir_path
-    if (dir_path / "podcasts").is_dir() and any((dir_path / "podcasts").glob("*.md")):
+    if (dir_path / "episodes").is_dir() and any((dir_path / "episodes").rglob("*.md")):
+        target_dir = dir_path / "episodes"
+    elif (dir_path / "podcasts").is_dir() and any((dir_path / "podcasts").glob("*.md")):
         target_dir = dir_path / "podcasts"
 
-    files = sorted(list(target_dir.glob("*.md")), key=lambda p: p.name)
+    if any(target_dir.glob("*/*.md")):
+        all_md_files = list(target_dir.rglob("*.md"))
+    else:
+        all_md_files = list(target_dir.glob("*.md"))
+
+    # Filter out non-episode files
+    files = [f for f in all_md_files if is_episode_file(f)]
+    files.sort(key=lambda p: derive_slug(p))
+
     if limit is not None and limit > 0:
         files = files[:limit]
 
     stats.total_files = len(files)
 
+    # If --reset flag is set, delete documents and chunks not present in current source
+    if reset and not dry_run:
+        source_slugs = {derive_slug(f) for f in files}
+        stmt = select(Document.slug)
+        res = await db.execute(stmt)
+        existing_slugs = set(res.scalars().all())
+        stale_slugs = existing_slugs - source_slugs
+        if stale_slugs:
+            logger.info("Reset flag: deleting %d stale documents not present in current source", len(stale_slugs))
+            await db.execute(delete(Document).where(Document.slug.in_(list(stale_slugs))))
+            await db.commit()
+            stats.pruned_docs = len(stale_slugs)
+
     for idx, file_path in enumerate(files):
-        slug = file_path.stem
+        slug = derive_slug(file_path)
         try:
             status, chunk_count, token_count = await ingest_document(
                 file_path=file_path,

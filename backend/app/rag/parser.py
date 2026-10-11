@@ -2,6 +2,7 @@
 
 Extracts YAML frontmatter, deterministic SHA-256 content hashes,
 and ordered speaker turns with exact character offsets.
+Supports the ChatPRD corpus (episodes/{slug}/transcript.md) and legacy formats.
 """
 
 from dataclasses import dataclass
@@ -15,9 +16,25 @@ import yaml
 
 from app.models import Document
 
-# Strict regex requiring parenthesized timestamp:
-# prevents matching bold markdown titles like '**Area 51, An Uncensored History**:'
-SPEAKER_TURN_REGEX = re.compile(r"^\*\*([^*]+)\*\*\s*\(([^)]+)\):\s*", re.MULTILINE)
+# Speaker turn patterns
+# 1. Standard pattern: matches **Speaker** (ts): or Speaker (ts): or continuation (ts):
+SPEAKER_TURN_STD_REGEX = re.compile(
+    r"^[ \t]*(?:(?:\*\*([^\n*]+)\*\*|([A-Za-z0-9\.\'\+\-][^\n:(]*?))[ \t]+)?\(([\d:]{4,8})\):[ \t]*",
+    re.MULTILINE,
+)
+# 2. Bracketed timestamps: [ts] Speaker: (e.g. ryan-hoover)
+SPEAKER_TURN_BRACKET_REGEX = re.compile(
+    r"^[ \t]*\[([\d:]{4,8})\][ \t]+([^:\n]+):[ \t]*",
+    re.MULTILINE,
+)
+# 3. Colon only turns without timestamps (e.g. adriel-frederick)
+SPEAKER_TURN_COLON_REGEX = re.compile(
+    r"^[ \t]*([A-Z][A-Za-z0-9\s\.\'\+\-]{1,40}):[ \t]*$",
+    re.MULTILINE,
+)
+
+# Alias for backward-compatibility with tests referencing SPEAKER_TURN_REGEX
+SPEAKER_TURN_REGEX = SPEAKER_TURN_STD_REGEX
 FRONTMATTER_REGEX = re.compile(r"^\ufeff?---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
@@ -30,7 +47,7 @@ class SpeakerTurn:
     text: str  # Spoken content, stripped
     start_char: int  # Start of spoken text in raw file
     end_char: int  # End of spoken text in raw file
-    turn_start_char: int  # Start of '**Speaker** (timestamp):' in raw file
+    turn_start_char: int  # Start of turn header in raw file
     turn_end_char: int  # End of entire turn before next turn header
     turn_index: int  # 0-based sequence index within document
 
@@ -96,6 +113,54 @@ def extract_frontmatter(raw_text: str) -> tuple[Dict[str, Any], int]:
         return {}, body_start
 
 
+def is_episode_file(path: Path | str, fm: Optional[Dict[str, Any]] = None) -> bool:
+    """Check whether a markdown file is a genuine podcast episode transcript.
+
+    Skips index files, readmes, scripts, and non-episode files like teaser_2021.
+    """
+    p = Path(path)
+    if p.suffix.lower() != ".md":
+        return False
+    parts = [part.lower() for part in p.parts]
+    if "index" in parts or "scripts" in parts or "docs" in parts:
+        return False
+    if p.name.lower() in ("readme.md", "claude.md", "license.md", "episodes.md"):
+        return False
+    if p.parent.name.lower() in ("teaser_2021", "teaser") or p.stem.lower() in ("teaser_2021", "teaser"):
+        return False
+    if fm is not None:
+        guest = str(fm.get("guest") or "").strip().lower()
+        title = str(fm.get("title") or "").strip()
+        if guest in ("teaser_2021", "teaser") or not title:
+            return False
+    return True
+
+
+def derive_slug(
+    path: Path | str,
+    fm: Optional[Dict[str, Any]] = None,
+    explicit_slug: Optional[str] = None,
+) -> str:
+    """Derive stable, unique slug for an episode.
+
+    For transcripts formatted as episodes/{slug}/transcript.md, uses parent folder name.
+    For legacy transcripts formatted as podcasts/{slug}.md, uses stem.
+    """
+    if explicit_slug:
+        return explicit_slug
+
+    p = Path(path)
+    if p.name.lower() == "transcript.md" or p.stem.lower() in ("transcript", "index"):
+        slug = p.parent.name
+    else:
+        slug = p.stem
+
+    if not slug or slug.lower() in ("transcript", "index", "untitled", ".", ""):
+        title = (fm or {}).get("title", "untitled")
+        slug = re.sub(r"[^a-z0-9]+", "-", str(title).lower()).strip("-")
+    return slug
+
+
 def extract_speaker_turns(
     raw_text: str,
     body_start: int = 0,
@@ -103,6 +168,11 @@ def extract_speaker_turns(
     normalize_host: bool = True,
 ) -> tuple[List[SpeakerTurn], int]:
     """Extract ordered speaker turns with verified character offsets.
+
+    Supports:
+    1. Standard turns: Speaker (HH:MM:SS):, **Speaker** (HH:MM:SS):, and continuation (HH:MM:SS):
+    2. Bracketed turns: [HH:MM:SS] Speaker:
+    3. Un-timestamped turns: Speaker:
 
     Args:
         raw_text: Complete file text (including frontmatter).
@@ -113,13 +183,52 @@ def extract_speaker_turns(
     Returns:
         tuple of (turns_list, dropped_empty_count)
     """
-    matches = list(SPEAKER_TURN_REGEX.finditer(raw_text, pos=body_start))
+    m_std = list(SPEAKER_TURN_STD_REGEX.finditer(raw_text, pos=body_start))
+    m_brack = list(SPEAKER_TURN_BRACKET_REGEX.finditer(raw_text, pos=body_start))
+    m_colon = list(SPEAKER_TURN_COLON_REGEX.finditer(raw_text, pos=body_start))
+
+    if len(m_std) >= 5:
+        mode = "std"
+        matches = m_std
+    elif len(m_brack) >= 5:
+        mode = "brack"
+        matches = m_brack
+    elif len(m_colon) >= 5:
+        mode = "colon"
+        matches = m_colon
+    elif len(m_std) > 0:
+        mode = "std"
+        matches = m_std
+    elif len(m_brack) > 0:
+        mode = "brack"
+        matches = m_brack
+    elif len(m_colon) > 0:
+        mode = "colon"
+        matches = m_colon
+    else:
+        return [], 0
+
     turns: List[SpeakerTurn] = []
     dropped_empty = 0
+    current_speaker = "Lenny Rachitsky"
 
     for i, match in enumerate(matches):
-        speaker = match.group(1).strip()
-        timestamp = match.group(2).strip()
+        if mode == "std":
+            speaker_match = (match.group(1) or match.group(2) or "").strip()
+            timestamp = match.group(3).strip()
+            if speaker_match:
+                speaker = speaker_match
+                current_speaker = speaker
+            else:
+                speaker = current_speaker
+        elif mode == "brack":
+            timestamp = match.group(1).strip()
+            speaker = match.group(2).strip()
+            current_speaker = speaker
+        else:  # colon
+            speaker = match.group(1).strip()
+            timestamp = "00:00:00"
+            current_speaker = speaker
 
         if normalize_host and speaker == "Lenny":
             speaker = "Lenny Rachitsky"
@@ -169,7 +278,7 @@ def parse_transcript_text(
     derived_slug = slug
     if not derived_slug:
         if source_path:
-            derived_slug = Path(source_path).stem
+            derived_slug = derive_slug(source_path, fm)
         else:
             title_clean = fm.get("title", "untitled").lower()
             derived_slug = re.sub(r"[^a-z0-9]+", "-", title_clean).strip("-")
@@ -178,12 +287,15 @@ def parse_transcript_text(
     guest = fm.get("guest")
 
     pub_date: Optional[date] = None
-    raw_date = fm.get("date")
+    raw_date = fm.get("publish_date") or fm.get("date")
     if raw_date:
-        try:
-            pub_date = date.fromisoformat(str(raw_date))
-        except (ValueError, TypeError):
-            pub_date = None
+        if isinstance(raw_date, date):
+            pub_date = raw_date
+        else:
+            try:
+                pub_date = date.fromisoformat(str(raw_date).strip())
+            except (ValueError, TypeError):
+                pub_date = None
 
     turns, dropped_empty = extract_speaker_turns(clean_text, body_start=body_start)
 
@@ -191,9 +303,15 @@ def parse_transcript_text(
         "description": fm.get("description"),
         "word_count": fm.get("word_count"),
         "post_url": fm.get("post_url"),
-        "youtube_url": fm.get("youtube_url"),
-        "channel": fm.get("channel"),
+        "youtube_url": fm.get("youtube_url") or "",
         "video_id": fm.get("video_id"),
+        "channel": fm.get("channel"),
+        "duration": fm.get("duration"),
+        "duration_seconds": fm.get("duration_seconds"),
+        "view_count": fm.get("view_count"),
+        "keywords": fm.get("keywords") or [],
+        "spotify_url": fm.get("spotify_url"),
+        "spotify_id": fm.get("spotify_id"),
         "type": fm.get("type", "podcast"),
         "turn_count": len(turns),
         "empty_turns_dropped": dropped_empty,
@@ -225,13 +343,15 @@ def parse_transcript(
 def parse_transcript_file(
     file_path: Path | str,
     source_path_override: Optional[str] = None,
+    slug: Optional[str] = None,
 ) -> ParsedDocument:
     """Parse transcript from a file path."""
     path = Path(file_path)
     raw_text = path.read_text(encoding="utf-8-sig")
     display_path = source_path_override or str(path).replace("\\", "/")
+    derived_slug = slug or derive_slug(path)
     return parse_transcript_text(
         raw_text=raw_text,
         source_path=display_path,
-        slug=path.stem,
+        slug=derived_slug,
     )
