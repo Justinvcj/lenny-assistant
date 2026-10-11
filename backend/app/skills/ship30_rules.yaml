@@ -1,57 +1,75 @@
 # Ship 30 for 30 Writing Principles & Constraints
-# Generated for Task P6a
-# Note: notes/ship30_source.md was not found; all rules marked DRAFT-UNVERIFIED per specification.
+# Verified against the Ship 30 for 30 Ultimate Guide (notes/ship30_source.md)
 
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   target_word_count: 1250
   min_word_count: 1000
   max_word_count: 1500
-  source_file: "notes/ship30_source.md (MISSING)"
+  source_file: "notes/ship30_source.md"
+  guide_url: "https://www.ship30for30.com/post/how-to-start-writing-online-the-ship-30-for-30-ultimate-guide"
 
 rules:
   - id: "R_LENGTH"
     name: "Target Word Count"
     description: "Total essay word count must be approximately 1,250 words (acceptable range: 1,000 to 1,500 words)."
-    source: "DRAFT-UNVERIFIED"
+    source: "Brief specification (approximately 1,250 words; Ship 30 atomic essays in the guide are ~250–300 words)"
     checked_by_code: true
     min_words: 1000
     max_words: 1500
 
   - id: "R_HOOK"
     name: "Compelling Opening Hook"
-    description: "The essay must begin with a compelling hook in the first 1-2 paragraphs establishing why the topic matters, without an introductory heading like 'Introduction'."
-    source: "DRAFT-UNVERIFIED"
+    description: "The essay must begin with an opening hook establishing why the topic matters, the target audience, and the promise, without an introductory heading like 'Introduction'."
+    source: "Framework #3: Writing Headlines Readers Can't Help But Click On (The 5 Pieces Of Every Headline) & Framework #4: Formatting Your Writing For Skimmability (Skeleton Your Piece)"
     checked_by_code: true
 
   - id: "R_STRUCTURE"
-    name: "Multi-Section Modular Structure"
-    description: "The essay body must consist of 3 to 5 thematic sections, each separated by a Markdown H2 heading (## Section Title)."
-    source: "DRAFT-UNVERIFIED"
+    name: "Multi-Section Modular Structure (Wheels & Spokes)"
+    description: "The essay body must consist of 3 to 5 thematic sections using a consistent proven approach (e.g. steps, lessons, or mistakes), each separated by a Markdown H2 heading (## Section Title)."
+    source: "Framework #2: The Endless Idea Generator (Step 4: The Proven Approach) & Framework #4: Formatting Your Writing For Skimmability (The 2 Most Important Uses For Subheads: Wheels & Spokes)"
     checked_by_code: true
     min_sections: 3
     max_sections: 5
 
   - id: "R_FORMATTING"
     name: "High-Skimmability Formatting"
-    description: "The essay must use skimmable formatting including bulleted/numbered lists and selective bolding on core insights across sections."
-    source: "DRAFT-UNVERIFIED"
+    description: "The essay must use skimmable formatting including bulleted or numbered lists and selective bolding on core insights across sections."
+    source: "Framework #4: Formatting Your Writing For Skimmability (Lists, Bullets, and Bolded Sentences & Skimmability = Readability)"
     checked_by_code: true
 
   - id: "R_TAKEAWAY"
     name: "Actionable Key Takeaways"
     description: "The essay must conclude with a dedicated final section (e.g. '## Actionable Takeaways' or '## Key Takeaways') summarizing the primary lessons for operators."
-    source: "DRAFT-UNVERIFIED"
+    source: "Framework #4: Formatting Your Writing For Skimmability (Skeleton Your Piece — Conclusion Takeaways)"
     checked_by_code: true
 
   - id: "R_CITATION"
-    name: "Grounded Source Citations"
-    description: "Every body section must contain at least one valid [S#] citation tag referencing the provided transcript chunks, with zero out-of-bounds tags."
-    source: "DRAFT-UNVERIFIED"
+    name: "Grounded Source Citations (Golden Intersection)"
+    description: "Every body section must contain at least one valid [S#] citation tag referencing the provided transcript chunks, anchoring advice in verified practitioner data."
+    source: "Framework #2: The Endless Idea Generator (Step 2: The Credibility — Curating Experts) & Framework #3: The Golden Intersection: Answering The Reader's Question x Telling A Personal Story"
     checked_by_code: true
 
+  - id: "R_RHYTHM"
+    name: "Alternating Writing Rhythm (1/3/1 and 1/5/1 Cadence)"
+    description: "Alternate sentence lengths across paragraphs (e.g. 1/3/1 opener-body-closer cadence or 1/5/1 expanded middle); avoid monotonous consecutive single-sentence (1/1/1) or dense multi-sentence blocks (5/5/5)."
+    source: "Framework #4: Formatting Your Writing For Skimmability (Proven Writing Rhythms & Writing Rhythms That Sound BAD!)"
+    checked_by_code: false
+
+  - id: "R_RATE_OF_REVELATION"
+    name: "Fast Rate of Revelation"
+    description: "Every sentence must push the thesis forward by introducing fresh information, evidence, or tactical steps rather than circular restatements or filler descriptions."
+    source: "Framework #4: Formatting Your Writing For Skimmability (Rate Of Revelation)"
+    checked_by_code: false
+
+  - id: "R_DIFFERENTIATION"
+    name: "Content Differentiation & The Tequila Test"
+    description: "Avoid cliché industry platitudes and obvious conventional wisdom; articulate contrarian, specific, and non-obvious insights grounded in practitioner experience."
+    source: "Framework #5: Content Differentiation ('The Tequila Test' & Write The Ship)"
+    checked_by_code: false
+
   - id: "R_TONE"
-    name: "Active Voice & Operator Tone"
+    name: "Active Voice & Operator Tone (Clear > Clever)"
     description: "Tone must be direct, authoritative, and practical for product leaders and founders, avoiding corporate jargon, passive voice, and unnecessary filler."
-    source: "DRAFT-UNVERIFIED"
+    source: "Framework #3: Writing Headlines Readers Can't Help But Click On (Clear > Clever)"
     checked_by_code: false

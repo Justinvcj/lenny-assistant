@@ -421,3 +421,23 @@ async def test_generate_essay_repair_pass_not_looped():
     assert provider.call_count <= n_sections * 2 + 2
     # result is always returned — never raises
     assert isinstance(result, EssayResult)
+
+
+def test_ship30_rules_have_verified_sources():
+    """Verify that all rules in ship30_rules.yaml cite verified guide sections with 0 unverified labels."""
+    from app.skills.validator import load_rules_config
+    config = load_rules_config()
+    rules = config.get("rules", [])
+    assert len(rules) >= 7
+
+    for rule in rules:
+        source = rule.get("source", "")
+        assert source, f"Rule {rule.get('id')} has empty source"
+        assert "DRAFT-UNVERIFIED" not in source, f"Rule {rule.get('id')} has unverified source label: {source}"
+        assert rule.get("id"), "Rule missing id"
+        assert rule.get("name"), "Rule missing name"
+        assert rule.get("description"), "Rule missing description"
+
+    rule_ids = {r["id"] for r in rules}
+    expected_ids = {"R_LENGTH", "R_HOOK", "R_STRUCTURE", "R_FORMATTING", "R_TAKEAWAY", "R_CITATION"}
+    assert expected_ids.issubset(rule_ids)

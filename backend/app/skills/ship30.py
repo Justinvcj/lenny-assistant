@@ -71,6 +71,9 @@ Requirements:
 - Start with "## {title}" heading
 - Use at least 1 bullet list or numbered list
 - Bold at least 1 key insight with **bold**
+- Alternate sentence lengths with dynamic rhythm (e.g. 1/3/1 or 1/5/1 cadences; avoid monotonous blocks)
+- Fast rate of revelation: every sentence must push the thesis forward without circular fluff
+- Pass 'The Tequila Test': reject generic platitudes in favor of contrarian, battle-tested operator insights
 - Tag every factual claim with [S#] using ONLY these source indices: {allowed_tags}
 - Active voice. No jargon. Operator tone (product leaders, founders).
 - Do NOT invent claims. Ground everything in the sources below.
