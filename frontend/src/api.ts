@@ -15,6 +15,7 @@ export interface ApiErrorEnvelope {
 export interface HealthDatabaseStatus {
   connected: boolean;
   vector_count: number;
+  ingested?: boolean;
 }
 
 export interface HealthOllamaStatus {
@@ -27,6 +28,7 @@ export interface HealthOllamaStatus {
 
 export interface HealthResponse {
   status: 'ok' | 'degraded';
+  ingested?: boolean;
   database: HealthDatabaseStatus;
   ollama: HealthOllamaStatus;
 }

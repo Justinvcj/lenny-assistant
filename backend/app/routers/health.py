@@ -67,11 +67,15 @@ async def health_check(response: Response) -> Dict[str, Any]:
     else:
         overall_status = "ok"
 
+    is_ingested = bool(vector_count > 0)
+
     return {
         "status": overall_status,
+        "ingested": is_ingested,
         "database": {
             "connected": db_ok,
             "vector_count": vector_count,
+            "ingested": is_ingested,
         },
         "ollama": {
             "reachable": ollama_ok,

@@ -21,6 +21,7 @@ import { ChatArea } from './components/ChatArea';
 import { Composer } from './components/Composer';
 import { LoadingSkeleton } from './components/LoadingSkeleton';
 import { ErrorBanner, formatFriendlyErrorMessage } from './components/ErrorBanner';
+import { Database } from 'lucide-react';
 
 export const App: React.FC = () => {
   // Global & Session State
@@ -44,6 +45,7 @@ export const App: React.FC = () => {
 
   // Diagnostics & Config State
   const [healthStatus, setHealthStatus] = useState<'ok' | 'degraded' | 'offline'>('ok');
+  const [isKnowledgeBaseEmpty, setIsKnowledgeBaseEmpty] = useState<boolean>(false);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
 
   // Responsive Drawer & Layout State
@@ -58,6 +60,11 @@ export const App: React.FC = () => {
     try {
       const h = await getHealth();
       setHealthStatus(h.status === 'ok' ? 'ok' : 'degraded');
+      if (h.ingested === false || h.database?.vector_count === 0) {
+        setIsKnowledgeBaseEmpty(true);
+      } else {
+        setIsKnowledgeBaseEmpty(false);
+      }
     } catch {
       setHealthStatus('offline');
     }
@@ -370,6 +377,20 @@ export const App: React.FC = () => {
                 elapsedSeconds={elapsedSeconds}
                 onCancel={handleCancel}
               />
+            ) : undefined
+          }
+          bannerNode={
+            isKnowledgeBaseEmpty && healthStatus !== 'offline' ? (
+              <div
+                className="kb-empty-banner"
+                role="status"
+                data-testid="kb-empty-banner"
+              >
+                <Database size={16} aria-hidden="true" style={{ flexShrink: 0 }} />
+                <span>
+                  Knowledge base is empty. Ingest transcripts using <code>make ingest</code> or <code>python scripts/ingest.py</code> to enable podcast answers.
+                </span>
+              </div>
             ) : undefined
           }
           errorNode={

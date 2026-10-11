@@ -190,6 +190,21 @@ describe('App Component Integration Suite', () => {
       expect(healthBadge).toBeInTheDocument();
       expect(healthBadge).toHaveTextContent('offline');
     });
+
+    it('renders knowledge base empty banner when /health reports ingested: false or 0 vectors', async () => {
+      vi.spyOn(api, 'getHealth').mockResolvedValue({
+        status: 'ok',
+        ingested: false,
+        database: { connected: true, vector_count: 0, ingested: false },
+        ollama: defaultHealthOk.ollama,
+      });
+
+      render(<App />);
+
+      const kbBanner = await screen.findByTestId('kb-empty-banner');
+      expect(kbBanner).toBeInTheDocument();
+      expect(kbBanner).toHaveTextContent(/Knowledge base is empty/i);
+    });
   });
 
   // =========================================================================

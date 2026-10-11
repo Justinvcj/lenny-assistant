@@ -12,6 +12,7 @@ export interface ChatAreaProps {
   onCitationClick?: (citationNumber: number) => void;
   loadingNode?: React.ReactNode;
   errorNode?: React.ReactNode;
+  bannerNode?: React.ReactNode;
   children?: React.ReactNode;
 }
 
@@ -20,6 +21,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   isLoading = false,
   loadingNode,
   errorNode,
+  bannerNode,
   onOpenArtifact,
   onSelectStarterQuestion,
   onCitationClick,
@@ -37,7 +39,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       behavior: prefersReducedMotion ? 'auto' : 'smooth',
       block: 'end',
     });
-  }, [messages.length, isLoading, !!errorNode]);
+  }, [messages.length, isLoading, !!errorNode, !!bannerNode]);
 
   const isEmpty = messages.length === 0 && !isLoading;
 
@@ -45,6 +47,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     <main className="chat-viewport" role="main" aria-label="Conversation viewport">
       <div className="chat-scroll-area" ref={scrollAreaRef}>
         <div className="chat-container">
+          {bannerNode}
           {errorNode}
 
           {isEmpty ? (

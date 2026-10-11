@@ -7,8 +7,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: localdev
       POSTGRES_DB: lenny_assistant
-    ports:
-      - "127.0.0.1:5432:5432"
+    # Do not publish Postgres to the host by default (internal container network only)
+    # ports:
+    #   - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +32,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       - ./data:/data:ro
 
@@ -42,7 +49,7 @@ services:
     container_name: lenny-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
 

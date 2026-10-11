@@ -925,6 +925,30 @@ html, body {
   background-color: #b91c1c;
 }
 
+.kb-empty-banner {
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  color: #fbbf24;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 0.75rem;
+}
+
+.kb-empty-banner code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #fde68a;
+}
+
 /* --------------------------------------------------------------------------
    11. Composer, Quick Actions & Character Counter
    -------------------------------------------------------------------------- */

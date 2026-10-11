@@ -115,7 +115,13 @@ async def main_async(args: argparse.Namespace) -> int:
             print(f"ERROR: {exc.message}", file=sys.stderr)
             return 1
         except OllamaConnectionError as exc:
-            print(f"ERROR: {exc.message}", file=sys.stderr)
+            logger.warning("Ollama is unreachable during ingestion: %s", exc.message)
+            print(
+                f"\nWARNING: Ollama is unreachable at {settings.ollama_base_url}.\n"
+                f"Please ensure Ollama is running ('ollama serve') with '{settings.embedding_model}' pulled.\n"
+                f"Detail: {exc.message}\n",
+                file=sys.stderr,
+            )
             return 1
         except EmbeddingDimensionMismatchError as exc:
             print(f"ERROR: {exc.message}", file=sys.stderr)
