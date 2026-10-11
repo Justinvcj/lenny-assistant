@@ -1,34 +1,30 @@
 """Agent orchestrator using the Claude Agent SDK.
 
-Critical constraints from SPEC.md §4.5 and spike measurements:
-  - SDK: claude-agent-sdk using ClaudeSDKClient
-  - ANTHROPIC_BASE_URL → Ollama endpoint  (token = "ollama")
-  - Disable ALL built-in tools (BUILTIN_TOOLS list emptied)
-  - Allow ONLY intent-specific MCP tools (from agent/tools.py INTENT_TOOLS)
-  - cwd = empty temp dir (prevents accidental FS access)
-  - Hard timeout: AGENT_TIMEOUT_S
-  - Degraded fallback: if SDK fails or times out → direct Ollama provider call
-    with degraded=True in the result
+Fixed in post-P6 review (F1/F2/F3/F4/F5): matches the proven spike in
+`spike/sdk_test.py`:
 
-Spike reference (spike/SPIKE_LOG.md):
-  - Run 2: built-in tools disabled → input_tokens=384, tool called correctly
-  - E2E latency: 15.2 s with qwen2.5:7b
-  - Reliability: 22/25 tool calls, 10/10 refusals across 5 runs
+  - async with ClaudeSDKClient(options=ClaudeAgentOptions(...))
+  - await client.query(prompt); async for msg in client.receive_response()
+  - allowed_tools = ["mcp__lenny__<one tool>"], disallowed_tools = BUILTIN_TOOLS
+  - cwd = fresh empty tempdir; env carries ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
+  - degraded fallback is used ONLY for genuine failures and always logs the
+    exception type + message at ERROR level.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.agent.prompts import EXACT_REFUSAL_MESSAGE, build_system_prompt
+from app.agent.options import ProviderConfig, build_agent_options
+from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from app.agent.router import Intent
-from app.agent.tools import INTENT_TOOLS, TOOL_REGISTRY
+from app.agent.tools import build_tool_server
 from app.config import get_settings
 from app.llm.base import ChatMessage, LLMProvider
 from app.llm.factory import get_provider
@@ -36,30 +32,25 @@ from app.llm.factory import get_provider
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class AgentResult:
-    """Returned by run_agent()."""
-
     content: str
     tool_trace: List[Dict[str, Any]] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     degraded: bool = False
     artifact: Optional[Dict[str, Any]] = None
+    runtime: str = "sdk"               # "sdk" or "degraded"
+    sdk_tools: List[str] = field(default_factory=list)
+    num_turns: int = 0
 
 
 # ---------------------------------------------------------------------------
-# Source formatting helper
+# Source formatting (kept for legacy tests)
 # ---------------------------------------------------------------------------
 
 
 def _format_sources_for_prompt(sources: List[Dict[str, Any]]) -> str:
-    """Convert retrieval results to the numbered <source> block format."""
     blocks = []
     for s in sources:
         sid = s.get("id", f"S{s.get('n', '?')}")
@@ -78,114 +69,157 @@ def _format_sources_for_prompt(sources: List[Dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SDK-based agent run
+# SDK path (real, matches the spike)
 # ---------------------------------------------------------------------------
 
 
 async def _run_with_sdk(
+    *,
     intent: Intent,
     system_prompt: str,
     user_message: str,
-    ollama_base_url: str,
+    provider_config: ProviderConfig,
     timeout_s: int,
+    db: Any,
+    embedder: Any,
+    provider: Any,
+    sources: Optional[List[Any]],
+    max_artifact_bytes: int,
 ) -> AgentResult:
-    """Attempt to run via Claude Agent SDK pointed at Ollama.
+    """Run one agent turn via claude-agent-sdk against Ollama (or Anthropic).
 
-    This is the primary path.  Falls through and raises on any failure so
-    the caller can trigger the degraded fallback.
-
-    Key SDK configuration (from spike/SPIKE_LOG.md Run 2):
-      - tools list = only INTENT_TOOLS[intent], NOT BUILTIN_TOOLS
-      - cwd = empty tempdir
-      - ANTHROPIC_BASE_URL env var → ollama endpoint
-      - token = "ollama"
+    Any import/SDK exception is allowed to propagate — the public `run_agent`
+    wraps this call and converts failures into the degraded fallback.
     """
-    try:
-        # Conditional import — SDK may not be installed in all environments
-        from claude_agent_sdk import ClaudeSDKClient, run_agent as sdk_run_agent  # type: ignore
-    except ImportError:
-        raise RuntimeError(
-            "claude-agent-sdk is not installed. "
-            "Run: pip install claude-agent-sdk"
-        )
+    # Local import so test suites that mock the SDK via monkeypatch still work.
+    from claude_agent_sdk import (
+        AssistantMessage, ClaudeSDKClient, ResultMessage,
+        SystemMessage, TextBlock, ToolResultBlock, ToolUseBlock,
+    )
 
     settings = get_settings()
-    allowed_tool_names = INTENT_TOOLS.get(intent.value, ["search_transcripts"])
+    tool_server = build_tool_server(
+        db=db, embedder=embedder, provider=provider, sources=sources,
+        top_k=settings.retrieval_top_k, min_score=settings.retrieval_min_score,
+        max_artifact_bytes=max_artifact_bytes,
+    )
 
-    # Build the in-process MCP tool list (only allowed tools)
-    mcp_tools = {
-        name: TOOL_REGISTRY[name]
-        for name in allowed_tool_names
-        if name in TOOL_REGISTRY
-    }
+    with tempfile.TemporaryDirectory(prefix="lenny-agent-") as cwd:
+        options = build_agent_options(
+            intent=intent,
+            tools_server=tool_server,
+            provider_config=provider_config,
+            tempdir=Path(cwd),
+            system_prompt=system_prompt,
+            max_turns=5,
+        )
 
-    tool_trace: List[Dict[str, Any]] = []
+        tool_calls: List[Dict[str, Any]] = []
+        tool_results: Dict[str, Dict[str, Any]] = {}
+        final_text_parts: List[str] = []
+        artifact_payload: Optional[Dict[str, Any]] = None
+        init_tools: List[str] = []
+        input_tokens = 0
+        output_tokens = 0
+        num_turns = 0
 
-    # Patch env so SDK routes to Ollama
-    old_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    old_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        async def _drive() -> None:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(user_message)
+                async for message in client.receive_response():
+                    if isinstance(message, SystemMessage):
+                        if message.subtype == "init":
+                            tools_from_init = message.data.get("tools") or []
+                            init_tools.extend(tools_from_init)
+                    elif isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, ToolUseBlock):
+                                tool_calls.append({
+                                    "tool": block.name,
+                                    "input": block.input,
+                                    "id": block.id,
+                                })
+                            elif isinstance(block, TextBlock):
+                                final_text_parts.append(block.text)
+                    elif isinstance(message, ResultMessage):
+                        nonlocal input_tokens, output_tokens, num_turns
+                        num_turns = message.num_turns
+                        usage = message.usage or {}
+                        input_tokens = int(usage.get("input_tokens", 0) or 0)
+                        output_tokens = int(usage.get("output_tokens", 0) or 0)
+                        if message.result and not final_text_parts:
+                            final_text_parts.append(message.result)
+                    # Tool result blocks arrive on UserMessage; we don't need to
+                    # mine them for the artifact — the handlers return a dict
+                    # that the SDK's own machinery routes to the model. We get
+                    # the artifact payload by inspecting our handler state via
+                    # the ToolUseBlock inputs plus the handler side effect
+                    # below. For reliability we re-run the artifact-producing
+                    # tools in-process so we have the payload without parsing
+                    # the SDK's tool-result transport.
 
-    try:
-        os.environ["ANTHROPIC_BASE_URL"] = ollama_base_url
-        os.environ["ANTHROPIC_API_KEY"] = "ollama"
+        await asyncio.wait_for(_drive(), timeout=timeout_s)
 
-        with tempfile.TemporaryDirectory() as cwd:
-            client = ClaudeSDKClient(
-                base_url=ollama_base_url,
-                api_key="ollama",
-                model=settings.llm_model,
-            )
+        # Re-run any artifact-producing tool call in-process so we capture the
+        # _artifact payload reliably (the SDK transports only the public
+        # content list, not the auxiliary fields). Safe because the tools are
+        # deterministic given their args.
+        for call in tool_calls:
+            name = call["tool"]
+            args = call.get("input") or {}
+            if name == "mcp__lenny__create_artifact":
+                from app.agent.tools import create_artifact as _ca
+                try:
+                    out = await _ca(
+                        title=args.get("title", "Generated Artifact"),
+                        html=args.get("html", ""),
+                        artifact_type=args.get("artifact_type", "html"),
+                        max_bytes=max_artifact_bytes,
+                    )
+                    artifact_payload = out
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Replay of create_artifact failed: %s", exc)
+            elif name == "mcp__lenny__generate_ship30_essay":
+                if sources and provider is not None:
+                    try:
+                        from app.skills.ship30 import generate_essay
+                        result = await generate_essay(
+                            topic=args.get("topic", "").strip() or "growth insights",
+                            sources=list(sources),
+                            provider=provider,
+                        )
+                        artifact_payload = {
+                            "title": f"Ship 30 Essay: {args.get('topic', '')[:60]}",
+                            "html": result.content,
+                            "type": "markdown",
+                            "size_bytes": len(result.content.encode("utf-8")),
+                            "truncated": False,
+                            "word_count": result.word_count,
+                            "validation_report": {
+                                "passed": result.report.passed,
+                                "failed_rules": result.report.failed_rules,
+                            },
+                            "repaired": result.repaired,
+                        }
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Replay of ship30 essay failed: %s", exc)
 
-            result = await asyncio.wait_for(
-                sdk_run_agent(
-                    client=client,
-                    system=system_prompt,
-                    prompt=user_message,
-                    tools=list(mcp_tools.values()),
-                    # CRITICAL: no built-in tools (BUILTIN_TOOLS = [])
-                    builtin_tools=[],
-                    cwd=cwd,
-                ),
-                timeout=timeout_s,
-            )
-
-        content = result.result or EXACT_REFUSAL_MESSAGE
-        tool_trace = [
-            {"tool": t.get("name"), "input": t.get("input"), "output": t.get("output")}
-            for t in getattr(result, "tool_calls", [])
-        ]
-
-        # Extract artifact if create_artifact was called
-        artifact = None
-        for trace in tool_trace:
-            if trace.get("tool") == "create_artifact" and trace.get("output"):
-                artifact = trace["output"]
-                break
-
-        usage = getattr(result, "usage", {}) or {}
+        content = ("".join(final_text_parts).strip() or EXACT_REFUSAL_MESSAGE)
         return AgentResult(
             content=content,
-            tool_trace=tool_trace,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            tool_trace=[{"sdk_tools": init_tools, "calls": tool_calls}],
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             degraded=False,
-            artifact=artifact,
+            artifact=artifact_payload,
+            runtime="sdk",
+            sdk_tools=init_tools,
+            num_turns=num_turns,
         )
-    finally:
-        # Restore environment
-        if old_base_url is None:
-            os.environ.pop("ANTHROPIC_BASE_URL", None)
-        else:
-            os.environ["ANTHROPIC_BASE_URL"] = old_base_url
-
-        if old_api_key is None:
-            os.environ.pop("ANTHROPIC_API_KEY", None)
-        else:
-            os.environ["ANTHROPIC_API_KEY"] = old_api_key
 
 
 # ---------------------------------------------------------------------------
-# Degraded fallback: direct Ollama provider call
+# Degraded fallback (direct provider call) — only for GENUINE SDK failures
 # ---------------------------------------------------------------------------
 
 
@@ -193,9 +227,14 @@ async def _run_degraded(
     system_prompt: str,
     user_message: str,
     provider: LLMProvider,
+    *,
+    reason: str = "sdk_unavailable",
+    exc_type: str = "unknown",
 ) -> AgentResult:
-    """Direct provider call used when SDK path fails or times out."""
-    logger.warning("orchestrator: using degraded fallback (direct provider call)")
+    logger.error(
+        "orchestrator: degraded fallback engaged exc_type=%s reason=%s",
+        exc_type, reason,
+    )
     try:
         response = await provider.chat(
             messages=[ChatMessage(role="user", content=user_message)],
@@ -205,17 +244,28 @@ async def _run_degraded(
         )
         return AgentResult(
             content=response.content or EXACT_REFUSAL_MESSAGE,
-            tool_trace=[{"degraded": True, "reason": "sdk_unavailable"}],
+            tool_trace=[{
+                "degraded": True,
+                "degraded_reason": reason,
+                "degraded_exc_type": exc_type,
+            }],
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             degraded=True,
+            runtime="degraded",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("orchestrator: degraded fallback also failed: %s", exc)
+        logger.error("orchestrator: degraded provider.chat failed: %s: %s",
+                     type(exc).__name__, exc)
         return AgentResult(
             content=EXACT_REFUSAL_MESSAGE,
-            tool_trace=[{"degraded": True, "reason": str(exc)}],
+            tool_trace=[{
+                "degraded": True,
+                "degraded_reason": f"provider_also_failed: {exc}",
+                "degraded_exc_type": type(exc).__name__,
+            }],
             degraded=True,
+            runtime="degraded",
         )
 
 
@@ -231,55 +281,55 @@ async def run_agent(
     *,
     provider: Optional[LLMProvider] = None,
     timeout_s: Optional[int] = None,
+    db: Any = None,
+    embedder: Any = None,
+    sources: Optional[List[Any]] = None,
 ) -> AgentResult:
-    """Run the agent for a single user turn.
-
-    Args:
-        intent:        Classified intent (QA / ESSAY / ARTIFACT).
-        system_prompt: Full grounded system prompt from agent/prompts.py.
-        user_message:  The (possibly rewritten) user query.
-        provider:      Override the LLM provider (useful in tests).
-        timeout_s:     Override the agent timeout in seconds.
-
-    Returns:
-        AgentResult with content, tool_trace, token counts, degraded flag.
-    """
+    """Run the agent for a single user turn."""
     settings = get_settings()
     _provider = provider or get_provider()
     _timeout = timeout_s if timeout_s is not None else settings.agent_timeout_s
-    _ollama_url = settings.ollama_base_url
+
+    provider_cfg = ProviderConfig(
+        name=settings.llm_provider,
+        model=settings.llm_model,
+        ollama_base_url=settings.ollama_base_url,
+        anthropic_api_key=settings.anthropic_api_key or None,
+    )
 
     t0 = time.monotonic()
-
     try:
         result = await _run_with_sdk(
             intent=intent,
             system_prompt=system_prompt,
             user_message=user_message,
-            ollama_base_url=_ollama_url,
+            provider_config=provider_cfg,
             timeout_s=_timeout,
+            db=db,
+            embedder=embedder,
+            provider=_provider,
+            sources=sources,
+            max_artifact_bytes=settings.artifact_max_bytes,
         )
         elapsed = time.monotonic() - t0
         logger.info(
-            "orchestrator: SDK run ok intent=%s latency=%.1fs tokens_in=%d tokens_out=%d",
-            intent.value,
-            elapsed,
-            result.input_tokens,
-            result.output_tokens,
+            "orchestrator: SDK ok intent=%s runtime=%s latency=%.1fs "
+            "tokens_in=%d tokens_out=%d turns=%d sdk_tools=%s",
+            intent.value, result.runtime, elapsed,
+            result.input_tokens, result.output_tokens, result.num_turns,
+            result.sdk_tools,
         )
         return result
-
-    except (RuntimeError, ImportError) as sdk_err:
-        # SDK not installed or misconfigured — go straight to degraded
-        logger.warning("orchestrator: SDK unavailable (%s) — degraded", sdk_err)
-        return await _run_degraded(system_prompt, user_message, _provider)
-
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - t0
-        logger.warning("orchestrator: SDK timed out after %.1fs — degraded", elapsed)
-        return await _run_degraded(system_prompt, user_message, _provider)
-
+        return await _run_degraded(
+            system_prompt, user_message, _provider,
+            reason=f"timeout after {elapsed:.1f}s", exc_type="TimeoutError",
+        )
     except Exception as exc:  # noqa: BLE001
         elapsed = time.monotonic() - t0
-        logger.error("orchestrator: SDK error after %.1fs: %s — degraded", elapsed, exc)
-        return await _run_degraded(system_prompt, user_message, _provider)
+        return await _run_degraded(
+            system_prompt, user_message, _provider,
+            reason=f"{exc} (after {elapsed:.1f}s)",
+            exc_type=type(exc).__name__,
+        )

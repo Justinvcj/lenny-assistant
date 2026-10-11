@@ -190,6 +190,9 @@ async def post_message(
         user_message=body.content,
         provider=provider,
         timeout_s=settings.agent_timeout_s,
+        db=db,
+        embedder=embedder,
+        sources=sources,
     )
 
     # 10. Citation verification & retry protocol
@@ -213,6 +216,9 @@ async def post_message(
             user_message=retry_prompt,
             provider=provider,
             timeout_s=settings.agent_timeout_s,
+            db=db,
+            embedder=embedder,
+            sources=sources,
         )
         verif_retry = verify_citations(answer=retry_res.content, sources=sources, db=db)
 
