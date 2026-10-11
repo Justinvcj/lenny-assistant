@@ -20,6 +20,7 @@ from app.routers.health import router as health_router
 from app.routers.sessions import router as sessions_router
 from app.routers.chat import router as chat_router
 from app.routers.artifacts import router as artifacts_router
+from app.routers.client_events import router as client_events_router
 
 settings = get_settings()
 setup_logging(settings.log_level)
@@ -77,3 +78,4 @@ app.include_router(health_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(artifacts_router)
+app.include_router(client_events_router)

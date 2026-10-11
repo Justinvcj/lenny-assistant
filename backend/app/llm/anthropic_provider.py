@@ -22,18 +22,19 @@ try:
 
     _ANTHROPIC_AVAILABLE = True
 except ImportError:
+    _anthropic = None
     _ANTHROPIC_AVAILABLE = False
 
 
 class AnthropicProvider:
-    """Cloud Anthropic implementation of LLMProvider.  UNTESTED."""
+    """Cloud Anthropic implementation of LLMProvider. UNTESTED against live API."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: str = "claude-3-5-sonnet-20241022",
     ) -> None:
-        if not _ANTHROPIC_AVAILABLE:
+        if not _ANTHROPIC_AVAILABLE or _anthropic is None:
             raise RuntimeError(
                 "The 'anthropic' package is not installed. "
                 "Install it with: pip install anthropic"

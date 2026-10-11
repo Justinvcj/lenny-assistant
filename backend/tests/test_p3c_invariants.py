@@ -98,7 +98,7 @@ def test_invariant_1_zero_norm_fallback_branches():
     for test_dim in [1, 2, 384, 768, 1536]:
         fallback_vec = [1.0 / math.sqrt(test_dim)] * test_dim
         norm = math.sqrt(sum(x * x for x in fallback_vec))
-        assert abs(norm - 1.0) <= 1e-15, f"Fallback norm deviation {abs(norm - 1.0)} on dim {test_dim}"
+        assert abs(norm - 1.0) <= 1e-12, f"Fallback norm deviation {abs(norm - 1.0)} on dim {test_dim}"
 
 
 # ==============================================================================

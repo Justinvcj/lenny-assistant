@@ -1,5 +1,4 @@
-"""Artifacts router for fetching and creating saved artifacts."""
-
+import logging
 import uuid
 from typing import Any, Dict
 from fastapi import APIRouter, Depends, status
@@ -9,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_db_session
 from app.errors import AppException
-from app.models import Artifact
+from app.models import Artifact, utc_now
 from app.schemas import ArtifactCreate, ArtifactResponse
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 VALID_ARTIFACT_TYPES = {"markdown", "html"}
@@ -46,10 +46,12 @@ async def create_artifact_endpoint(
         type=clean_type,
         title=body.title,
         content=body.content,
+        created_at=utc_now(),
     )
     db.add(artifact)
     await db.commit()
     await db.refresh(artifact)
+    logger.info("Artifact created: type=%s bytes=%d id=%s", clean_type, content_bytes, str(artifact.id))
     return ArtifactResponse.model_validate(artifact)
 
 

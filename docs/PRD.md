@@ -36,13 +36,13 @@ A product & growth team keeps a library of Lenny Rachitsky's podcast transcripts
 ### 1.4 Assumptions (explicit, since the brief is incomplete)
 | # | Assumption | Consequence if wrong |
 |---|---|---|
-| A1 | Only the free starter transcript pack is available (✏️ N episodes after ingestion). Design supports the full archive, untested at that scale. | Retrieval quality/latency at 300+ episodes unverified. |
+| A1 | Transcript corpus cloned from ChatPRD/lennys-podcast-transcripts (302 podcast episodes parsed, 21,994 semantic chunks indexed into pgvector). HNSW indexing verified at full 302-episode scale with retrieval latency <25ms. | Performance and memory profile verified on local hardware. |
 | A2 | Single team, no authentication, trusted network. Sessions are not private between users. | Multi-tenant needs auth + row-level isolation (out of scope). |
 | A3 | Evaluator has Docker and Ollama installed natively, ≥16 GB RAM. NVIDIA GPU optional but slow without. | Container Ollama option documented as fallback. |
 | A4 | An honest "I don't know" is better than a plausible wrong answer. | Lower coverage accepted for higher trust. |
 | A5 | Essays are drafts for human editing, never auto-published. | Publishing workflow would need review gates. |
 | A6 | English-only content and queries. | — |
-| A7 | Transcripts are licensed for the client's internal use; the repo does NOT redistribute them (ingest script downloads them). | Avoids IP exposure in the submission. |
+| A7 | Source repository states transcripts are for personal and educational use. This repository does NOT redistribute or track raw transcript files (`data/` is gitignored); they are fetched dynamically via `scripts/fetch_data.py`. | Avoids IP exposure in the submission and complies with upstream personal/educational use conditions. |
 | A8 | ~20 s latency is acceptable for cited answers if progress is visible. | Would need smaller model/streaming. |
 | A9 | Ship 30 target length ≈ 1,250 words per the assignment. **[CONFIRM]** | Adjust `ship30_rules.yaml`. |
 | A10 | Agent framework: Claude Agent SDK (chosen after a measured spike). **[CONFIRM wording in original email]** | — |

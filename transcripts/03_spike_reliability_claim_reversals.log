@@ -1,0 +1,146 @@
+Reliability test: 22/25 tool calls, 10/10 refusals, 2 reversed claims
+
+run 1
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is driven by retention, according to the information from Episode 12 (Guest A).
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast mentions that retention is driven by activation within the first week in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 5/5
+
+run 2
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is driven by retention, according to Guest A in Episode 12.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast mentions that retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 5/5
+
+run 3
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Activation within the first week is crucial according to Episode 12 with Guest A, as it drives retention.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: The podcast Episode 12 (Guest A) states that retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5
+
+run 4
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: In Episode 12 (Guest A), it was mentioned that retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: In Episode 12 (Guest A), retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to the information from Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5
+
+run 5
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: Tell me about activation in the first week.
+  tool called: True
+  answer: Retention is driven by activation within the first week, as mentioned in Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What does the podcast say about retention?
+  tool called: True
+  answer: According to Episode 12 with Guest A, retention is driven by activation within the first week.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How does early activation relate to retention?
+  tool called: True
+  answer: Retention is driven by activation within the first week, according to Episode 12 with Guest A.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: What is the capital of France?
+  tool called: True
+  answer: I don't have information about that in the transcripts.
+[claude-code:unrecognized_model] {"model":"qwen2.5:7b","query_source":"generate_session_title"}
+
+Q: How do I bake sourdough bread?
+  tool called: False
+  answer: I don't have information about that in the transcripts.
+
+TOOL CALL RATE: 4/5

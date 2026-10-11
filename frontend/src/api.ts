@@ -234,3 +234,22 @@ export async function getArtifact(artifactId: string, signal?: AbortSignal): Pro
     signal,
   });
 }
+
+export interface ClientEventPayload {
+  type: string;
+  artifact_id?: string | null;
+  reason: string;
+}
+
+export async function postClientEvent(event: ClientEventPayload): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/client-events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+  } catch (err) {
+    console.warn('Failed to send client event telemetry:', err);
+  }
+}
+

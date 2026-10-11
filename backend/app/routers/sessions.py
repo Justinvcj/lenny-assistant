@@ -1,8 +1,7 @@
-"""Session CRUD endpoints."""
-
+import json
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,14 +15,54 @@ from app.schemas import SessionCreate, SessionDetailResponse, SessionResponse
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 settings = get_settings()
 
+MAX_USER_METADATA_BYTES = 16384  # 16 KB maximum
+
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
+    request: Request,
     body: SessionCreate = SessionCreate(),
     db: AsyncSession = Depends(get_db_session),
 ) -> SessionResponse:
+    raw_meta = body.user_metadata if body.user_metadata is not None else {}
+    if not isinstance(raw_meta, dict):
+        raise AppException(
+            code="validation_error",
+            message="user_metadata must be a JSON object",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    try:
+        serialized_meta = json.dumps(raw_meta)
+    except (TypeError, ValueError) as exc:
+        raise AppException(
+            code="validation_error",
+            message=f"user_metadata is not JSON serializable: {exc}",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    if len(serialized_meta.encode("utf-8")) > MAX_USER_METADATA_BYTES:
+        raise AppException(
+            code="validation_error",
+            message=f"user_metadata exceeds maximum allowed size of {MAX_USER_METADATA_BYTES} bytes",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    meta = dict(raw_meta)
+
+    # Capture request metadata per brief requirement (user-agent and Accept-Language; NEVER IP)
+    user_agent = request.headers.get("user-agent")
+    if user_agent:
+        meta["user_agent"] = user_agent
+
+    accept_language = request.headers.get("accept-language")
+    if accept_language:
+        meta["accept_language"] = accept_language
+
     session = Session(
         title=body.title,
+        client_id=body.client_id,
+        user_metadata=meta,
         llm_provider=body.llm_provider or settings.llm_provider,
         llm_model=body.llm_model or settings.llm_model,
     )

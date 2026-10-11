@@ -111,6 +111,8 @@ CREATE INDEX chunks_embedding_hnsw ON chunks USING hnsw (embedding vector_cosine
 CREATE TABLE sessions (
   id            UUID PRIMARY KEY,
   title         TEXT,
+  client_id     TEXT,
+  user_metadata JSONB NOT NULL DEFAULT '{}',
   llm_provider  TEXT NOT NULL,
   llm_model     TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -141,38 +143,44 @@ CREATE TABLE artifacts (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
-Schema is managed by Alembic (one initial migration).
+Schema is managed by Alembic (`001_initial_schema`, `002_add_user_metadata`).
 
 ## 7. API
 | Method & path | Purpose | Success | Errors |
 |---|---|---|---|
-| GET /health | db, ollama, embedding model, vector count | 200 (status ok/degraded) | 503 when DB down |
+| GET /health | db, ollama, embedding model, vector count, ingested flag | 200 (status ok/degraded) | 503 when DB down |
 | GET /config | active provider/model, embedding model | 200 | — |
-| POST /sessions | create session | 201 | 422 |
+| POST /sessions | create session (accepts optional client_id & user_metadata; captures User-Agent & Accept-Language; no IP stored) | 201 | 422 |
 | GET /sessions | list sessions (newest first) | 200 | — |
-| GET /sessions/{id} | session + messages | 200 | 404 |
-| DELETE /sessions/{id} | delete session | 204 | 404 |
+| GET /sessions/{id} | session + messages + user_metadata | 200 | 404 |
+| DELETE /sessions/{id} | delete session (cascades to messages & artifacts) | 204 | 404 |
 | POST /sessions/{id}/messages | send message, run pipeline | 200 `{message, citations, artifact?, intent, degraded, latency_ms}` | 404, 422, 502 (LLM unavailable), 504 (timeout) |
 | GET /artifacts/{id} | fetch artifact | 200 | 404 |
+| POST /artifacts | create artifact directly with type and size checks | 201 | 413, 422 |
+| POST /client-events | ingest frontend diagnostic telemetry (render/sanitize errors, size rejection; never content) | 204 | 422 |
 All bodies validated by Pydantic; message length capped; errors use the standard envelope.
 
 ## 8. LLM provider abstraction
-`llm/base.py` defines `LLMProvider` (chat, embed, health). `factory.py` returns provider from config. The agent runtime obtains its SDK environment from the same factory. Adding a provider = one class + one factory branch. Anthropic provider is implemented and marked UNTESTED.
+`llm/base.py` defines `LLMProvider` (chat, embed, health). `factory.py` returns provider from config. The agent runtime obtains its SDK environment from the same factory. Adding a provider = one class + one factory branch. Anthropic provider is implemented and unit tested with mocked HTTP transport.
 
 ## 9. Ship 30 skill
 `skills/ship30_rules.yaml` holds the encoded principles (hook, structure, formatting, length, takeaway, citation rule), sourced from the assignment's linked reference. `skills/ship30.py` runs: retrieve → outline → draft section by section with word budgets (a 7B model cannot hit 1,250 words in one pass) → assemble → validate (length range, hook present, headings, takeaway, every claim section has `[S#]`) → one repair pass → persist as markdown artifact. Validator is pure code and unit-tested.
 
-## 10. Failure modes
-| Failure | Detection | Behaviour |
-|---|---|---|
-| Ollama unreachable | health check / connection error | 502 `llm_unavailable`, UI banner, `/health` degraded |
-| DB unreachable | startup + request error | 503 `db_unavailable` |
-| Embedding dim mismatch | startup check | refuse to start ingestion/retrieval with clear message |
-| Empty/weak retrieval | score < threshold | refusal, no LLM call |
-| Agent runtime failure/timeout | exception/timeout | degraded fallback to direct provider call, flagged |
-| Invalid/missing citations | verifier | retry once, then refusal |
-| Missing/invalid cloud key | provider health | clear error, no stack trace |
-| Oversized artifact | size check | 413 `artifact_too_large` |
+## 10. Fallback Behaviour & Failure Modes
+
+### Strict No-Silent-Switch Guarantee
+The system **never silently switches** from Ollama to a cloud provider (or vice-versa). The active provider is determined exclusively by explicit configuration (`LLM_PROVIDER`). A failure of the local model will never incur unexpected cloud API charges or send user prompts to an unconfigured third-party service.
+
+### Degradation Matrix
+| Failure Condition | Immediate Behaviour | Fallback Mechanism | Telemetry & Observability |
+|---|---|---|---|
+| **Agent runtime failure or timeout** | Agent SDK / tool call raises or times out (`AGENT_TIMEOUT_S`) | **Degraded direct call to the SAME provider**: The backend immediately invokes a single-shot direct completion to the identical configured model (`qwen2.5:7b` or `claude-3-5-sonnet`) with grounded context. Response has `degraded: true`. | Logged with `degraded: true` and warning log. |
+| **Ollama unreachable** | Connection refused or network timeout connecting to `OLLAMA_BASE_URL` | Request returns `502 Bad Gateway` (`llm_unavailable`). `/health` returns HTTP 200 `status: "degraded"`. UI surfaces clear banner. | Structured log: `Ollama is unreachable at {base_url}`. |
+| **Missing or invalid cloud key** | `LLM_PROVIDER=anthropic` with empty or invalid `ANTHROPIC_API_KEY` | Immediate failure at startup or request dispatch with `401 Unauthorized` / `invalid_api_key`. Request aborted; no silent fallback. | Structured log with `invalid_api_key` error code. |
+| **Empty or weak retrieval** | All chunks below calibrated `RETRIEVAL_MIN_SCORE` (0.62) or knowledge base empty | Canonical grounded refusal returned: *"I could not find relevant information in Lenny's Podcast transcripts to answer your question."* **Zero LLM tokens consumed**. | `top_score` logged in request context; refusal event tracked. |
+| **Empty Knowledge Base** | Ingestion pipeline has not been executed (`chunks` count is 0) | `/health` reports `ingested: false`. Frontend renders an informational banner prompting user to run `make ingest`. Search returns empty results without crashing. | `/health` reports `ingested: false`. |
+| **Artifact rendering or sanitization failure** | DOMPurify throws, unexpected HTML structure, or React rendering error | `<ArtifactErrorBoundary>` catches failure; renders friendly fallback notice in panel. Source view and download remain available. | Frontend POSTs small event (`type`, `artifact_id`, `reason`) to `/client-events`; logged as structured JSON line. |
+| **Oversized artifact** | Artifact content exceeds 200,000 bytes security limit | UI renders friendly warning and disables live preview. Backend rejects with HTTP 413 `artifact_too_large`. | Frontend POSTs `artifact_size_rejected` event to `/client-events`. |
 
 ## 11. Observability
 JSON logs with `request_id, session_id, intent, provider, model, retrieval_ms, llm_ms, total_ms, n_chunks, top_score, input_tokens, degraded, error_code`. A request id is returned in the `X-Request-ID` header.

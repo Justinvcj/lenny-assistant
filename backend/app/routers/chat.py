@@ -294,6 +294,7 @@ async def post_message(
         )
         db.add(artifact_record)
         await db.flush()
+        logger.info("Artifact created: type=%s bytes=%d id=%s", "markdown", content_bytes, str(artifact_record.id))
     elif artifact_data and isinstance(artifact_data, dict):
         art_content = artifact_data.get("html", "")
         content_bytes = len(art_content.encode("utf-8"))
@@ -314,6 +315,7 @@ async def post_message(
         )
         db.add(artifact_record)
         await db.flush()
+        logger.info("Artifact created: type=%s bytes=%d id=%s", art_type, content_bytes, str(artifact_record.id))
 
     # 12. Persist assistant message
     elapsed_ms = int((time.perf_counter() - t0) * 1000)

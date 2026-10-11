@@ -35,6 +35,14 @@ from app.routers.chat import get_chat_embedder, get_chat_provider
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def mock_disable_sdk_in_unit_tests():
+    """Ensure chat endpoint unit tests run through the mock provider rather than live SDK CLI."""
+    with patch("app.agent.orchestrator._run_with_sdk", side_effect=RuntimeError("SDK disabled in unit tests")):
+        yield
+
+
+
 def make_mock_db(session_obj: Optional[Session] = None, history: Optional[List[Any]] = None):
     """Create a mock AsyncSession that returns synchronous Result objects."""
     mock_db = AsyncMock()

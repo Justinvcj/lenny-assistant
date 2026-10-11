@@ -40,5 +40,70 @@ Neutral background, one accent color, system font stack, 16px base, comfortable 
 ## 7. Content rules
 Answers lead with the direct answer, then support. Refusal wording is fixed and identical everywhere. Never show raw model errors; map to friendly text with a request id.
 
-## 8. Out of scope (UI)
+## 8. Information Architecture
+
+### Screens & Viewports
+The interface is structured as an adaptive single-page workspace (SPA) designed to minimize cognitive overhead and eliminate multi-page page transitions:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Header: Logo | Model Badge (Ollama · qwen2.5:7b) | Health Dot (online) │
+├───────────────┬──────────────────────────────────────┬─────────────────┤
+│ Left Sidebar  │ Center Main Chat Viewport            │ Right Artifact  │
+│ (280px)       │ (Flex-1, max-width ~860px)           │ Panel (420px)   │
+│               │                                      │                 │
+│ [+ New Chat]  │ [Empty Knowledge Base Banner]        │ [Tabs: Pre/Src] │
+│               │                                      │ [Copy][Download]│
+│ Session List  │ Message History:                     │ ┌─────────────┐ │
+│ - Title       │ - User Bubble                        │ │ Sandboxed   │ │
+│ - Timestamp   │ - Assistant Bubble                   │ │ Iframe /    │ │
+│ - Delete [X]  │   * Grounded text                    │ │ Markdown    │ │
+│               │   * Citations [S1][S2]               │ │ Viewer      │ │
+│               │   * Verified Passages Accordion      │ └─────────────┘ │
+│               │                                      │ [Sandbox Alert] │
+│               │ [Loading Skeleton + Elapsed Timer]   │                 │
+│               │ ───────────────────────────────────  │                 │
+│               │ Docked Composer:                     │                 │
+│               │ [Textarea (Auto-resize) | Send | 4k] │                 │
+└───────────────┴──────────────────────────────────────┴─────────────────┘
+```
+
+### Region Responsibilities
+1. **Header Region (`<header>`)**:
+   - Persistent brand identity ("Lenny Growth Assistant").
+   - Live Model Badge (`{provider} · {model}`) reflecting active backend configuration from `/config`.
+   - Real-time Connection Dot (`online` [green], `degraded` [amber], `offline` [red]) polled via `/health`.
+   - Mobile hamburger toggle for sidebar drawer.
+2. **Left Navigation Region (`<nav aria-label="Chat history">`)**:
+   - Action: `+ New Chat` primary button to reset viewport state.
+   - History: Reverse-chronological session list (`/sessions`).
+   - Active session highlight and confirmation-backed session deletion modal.
+3. **Center Main Chat Region (`<main role="main">`)**:
+   - Diagnostic Banners: Amber empty knowledge base banner (when `/health` reports `ingested: false`), red error banner with Request ID and retry CTA.
+   - Message Stream: Semantic log (`role="log" aria-live="polite"`) rendering user queries, verified assistant responses with expandable citation chips, and neutral refusal cards.
+   - In-Flight Feedback: Skeleton bubble showing real-time elapsed seconds and an immediate Cancel button (`AbortController`).
+   - Docked Composer: Auto-expanding textarea, 4,000-character limit counter, Shift+Enter newline support, and quick-action chips.
+4. **Right Artifact Region (`<aside role="complementary">`)**:
+   - Side-by-side workspace for reading long-form generated outputs (Ship 30 essays, HTML one-pagers).
+   - Mode switcher: `Preview` (sandboxed rendering) and `Source` (raw text).
+   - Action controls: One-click clipboard copy with status feedback and formatted file download (`.html` or `.md`).
+   - Safety: Sandboxed iframe (`sandbox=""`), size limit validation (200 KB), and React `ArtifactErrorBoundary`.
+
+---
+
+## 9. Design Decisions & Trade-Offs
+
+| Decision | Selected Approach | Rejected Alternative | Rationale & Trade-Off |
+|---|---|---|---|
+| **1. Artifact Presentation** | **Side-by-side sliding panel** | Modal overlay popup | Modals obscure conversational context and prevent referencing previous messages while reviewing generated essays. Side-by-side layout mimics professional IDEs and Claude artifacts. |
+| **2. Iframe Sandbox Policy** | **Strictly empty `sandbox=""`** | `sandbox="allow-scripts"` | Security invariant. Model-generated HTML must never execute JavaScript. An empty sandbox eliminates XSS, localStorage theft, and cross-origin access entirely. |
+| **3. Intent Routing Engine** | **Deterministic regex/rule router** | LLM self-classification prompt | Zero token consumption and sub-millisecond classification (<1ms vs 3–8s). Prevents local 7B model hallucination when routing between QA, Essay, and Artifact modes. |
+| **4. In-Flight Progress** | **Inline skeleton with elapsed timer & cancel** | Full-screen blocking modal spinner | Local inference on 7B models can take 15–30 seconds. A blocking modal induces user fatigue and prevents aborting stalled generations. |
+| **5. Citation Architecture** | **Interactive accordion chips `[S#]` with exact quotes** | Footnotes or plain text links | Inline chips allow instant verification without leaving the conversational thread. Expanding a chip displays the verbatim speaker turn and episode metadata. |
+| **6. Observability & Telemetry** | **Dedicated `/client-events` endpoint (type + reason only)** | Client console logging or transmitting full payload | Enables server-side observability for frontend rendering failures while strictly avoiding logging sensitive user content or prompt data. |
+| **7. Error Handling Strategy** | **Graceful inline ErrorBanner with Request ID** | Raw generic toast or alert dialog | Toasts easily vanish without notice. Inline banners retain context, surface the correlated `X-Request-ID` for debugging, and provide a direct "Retry" button. |
+
+---
+
+## 10. Out of scope (UI)
 Auth screens, multi-user presence, voice input, streaming token animation (stretch).

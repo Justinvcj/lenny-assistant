@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { X, FileCode, Copy, Check, Download, AlertTriangle } from 'lucide-react';
-import { ArtifactResponse } from '../api';
+import { ArtifactResponse, postClientEvent } from '../api';
 import { prepareHtmlArtifact, isArtifactOversized, ARTIFACT_MAX_BYTES } from '../utils/sanitizeArtifact';
+import { ArtifactErrorBoundary } from './ArtifactErrorBoundary';
 
 export interface ArtifactPanelProps {
   isOpen: boolean;
@@ -27,10 +28,6 @@ export const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const [activeTab, setActiveTab] = useState<'preview' | 'source'>('preview');
   const [copied, setCopied] = useState<boolean>(false);
 
-  if (!isOpen) {
-    return <aside className="artifact-panel hidden" aria-hidden="true" />;
-  }
-
   const rawContent =
     artifact?.content || (artifact as any)?.html || '';
   const title = artifact?.title || 'Generated Artifact';
@@ -38,7 +35,43 @@ export const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const isHtml = artifactType === 'html' || (artifactType !== 'markdown' && rawContent.includes('<'));
 
   const isOversized = isArtifactOversized(rawContent);
-  const { wrappedHtml } = prepareHtmlArtifact(title, rawContent);
+
+  let wrappedHtml = '';
+  let sanitizeError: string | null = null;
+  if (isHtml && !isOversized) {
+    try {
+      const res = prepareHtmlArtifact(title, rawContent);
+      wrappedHtml = res.wrappedHtml;
+    } catch (err: any) {
+      sanitizeError = err?.message || 'Sanitize failure';
+    }
+  }
+
+  // Telemetry for size rejection (reported once when artifact is opened)
+  useEffect(() => {
+    if (isOversized && isOpen) {
+      postClientEvent({
+        type: 'artifact_size_rejected',
+        artifact_id: (artifact as any)?.id || null,
+        reason: `Artifact size exceeds ${ARTIFACT_MAX_BYTES} bytes limit`,
+      });
+    }
+  }, [isOversized, isOpen, (artifact as any)?.id]);
+
+  // Telemetry for sanitize error
+  useEffect(() => {
+    if (sanitizeError && isOpen) {
+      postClientEvent({
+        type: 'artifact_sanitize_error',
+        artifact_id: (artifact as any)?.id || null,
+        reason: sanitizeError,
+      });
+    }
+  }, [sanitizeError, isOpen, (artifact as any)?.id]);
+
+  if (!isOpen) {
+    return <aside className="artifact-panel hidden" aria-hidden="true" />;
+  }
 
   const handleCopy = async () => {
     try {
@@ -225,74 +258,116 @@ export const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
           {/* Tab Content */}
           <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-            {activeTab === 'preview' ? (
-              isHtml ? (
-                <iframe
-                  sandbox=""
-                  srcDoc={wrappedHtml}
-                  title={title}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                    backgroundColor: '#ffffff',
-                  }}
-                />
-              ) : (
-                <div
-                  className="artifact-markdown-content"
-                  style={{
-                    padding: '1.25rem',
-                    overflow: 'auto',
-                    flex: 1,
-                    lineHeight: 1.6,
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  <pre style={{ display: 'none' }} aria-hidden="true">
-                    {rawContent}
-                  </pre>
-                  <ReactMarkdown
-                    components={{
-                      a: ({ href, children, ...props }) => {
-                        const safeHref =
-                          href && !href.trim().toLowerCase().startsWith('javascript:')
-                            ? href
-                            : '#';
-                        return (
-                          <a
-                            href={safeHref}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            {...props}
-                          >
-                            {children}
-                          </a>
-                        );
-                      },
+            <ArtifactErrorBoundary artifactId={(artifact as any)?.id}>
+              {activeTab === 'preview' ? (
+                isOversized ? (
+                  <div
+                    className="artifact-oversized-fallback"
+                    data-testid="artifact-oversized-fallback"
+                    style={{
+                      padding: '2.5rem 1.5rem',
+                      textAlign: 'center',
+                      color: '#ef4444',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.5rem',
                     }}
                   >
-                    {rawContent}
-                  </ReactMarkdown>
-                </div>
-              )
-            ) : (
-              <pre
-                style={{
-                  margin: 0,
-                  padding: '1rem',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-secondary)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                  overflow: 'auto',
-                  flex: 1,
-                }}
-              >
-                {rawContent}
-              </pre>
-            )}
+                    <AlertTriangle size={32} aria-hidden="true" />
+                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Artifact Size Limit Exceeded</h4>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '340px' }}>
+                      This artifact exceeds the {ARTIFACT_MAX_BYTES.toLocaleString()} bytes safety limit. Preview is disabled. You may still view the source code or download the file.
+                    </p>
+                  </div>
+                ) : sanitizeError ? (
+                  <div
+                    className="artifact-sanitize-fallback"
+                    data-testid="artifact-sanitize-error"
+                    style={{
+                      padding: '2.5rem 1.5rem',
+                      textAlign: 'center',
+                      color: '#ef4444',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <AlertTriangle size={32} aria-hidden="true" />
+                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Sanitization Failed</h4>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '340px' }}>
+                      Unable to safely sanitize artifact HTML content for preview.
+                    </p>
+                  </div>
+                ) : isHtml ? (
+                  <iframe
+                    sandbox=""
+                    srcDoc={wrappedHtml}
+                    title={title}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      border: 'none',
+                      backgroundColor: '#ffffff',
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="artifact-markdown-content"
+                    style={{
+                      padding: '1.25rem',
+                      overflow: 'auto',
+                      flex: 1,
+                      lineHeight: 1.6,
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <pre style={{ display: 'none' }} aria-hidden="true">
+                      {rawContent}
+                    </pre>
+                    <ReactMarkdown
+                      components={{
+                        a: ({ href, children, ...props }) => {
+                          const safeHref =
+                            href && !href.trim().toLowerCase().startsWith('javascript:')
+                              ? href
+                              : '#';
+                          return (
+                            <a
+                              href={safeHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              {...props}
+                            >
+                              {children}
+                            </a>
+                          );
+                        },
+                      }}
+                    >
+                      {rawContent}
+                    </ReactMarkdown>
+                  </div>
+                )
+              ) : (
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: '1rem',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    overflow: 'auto',
+                    flex: 1,
+                  }}
+                >
+                  {rawContent}
+                </pre>
+              )}
+            </ArtifactErrorBoundary>
           </div>
         </div>
       )}

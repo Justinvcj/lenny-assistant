@@ -209,3 +209,94 @@ def test_anthropic_provider_no_package(monkeypatch):
         AnthropicProvider(api_key="fake")
 
     monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", original)
+
+
+def test_anthropic_provider_missing_api_key(monkeypatch):
+    """AnthropicProvider must raise RuntimeError when ANTHROPIC_API_KEY is unset."""
+    from unittest.mock import MagicMock
+    import app.llm.anthropic_provider as ap_module
+    from app.llm.anthropic_provider import AnthropicProvider
+
+    monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
+    monkeypatch.setattr(ap_module, "_anthropic", MagicMock())
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY is not set"):
+        AnthropicProvider(api_key="")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_chat_mocked_http(monkeypatch):
+    """AnthropicProvider.chat() sends messages and parses usage with mocked client."""
+    from unittest.mock import AsyncMock, MagicMock
+    import app.llm.anthropic_provider as ap_module
+    from app.llm.anthropic_provider import AnthropicProvider
+
+    monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_content_block = MagicMock()
+    mock_content_block.text = "Mocked Claude response for Lenny query"
+    mock_resp.content = [mock_content_block]
+    mock_resp.usage.input_tokens = 45
+    mock_resp.usage.output_tokens = 90
+
+    mock_client.messages.create = AsyncMock(return_value=mock_resp)
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_mod.AsyncAnthropic = MagicMock(return_value=mock_client)
+    monkeypatch.setattr(ap_module, "_anthropic", mock_anthropic_mod)
+
+    provider = AnthropicProvider(api_key="sk-ant-test-key-mocked", model="claude-3-5-sonnet-20241022")
+    res = await provider.chat(
+        [ChatMessage(role="user", content="What is retention?")],
+        system="You are Lenny Assistant.",
+    )
+
+    assert res.content == "Mocked Claude response for Lenny query"
+    assert res.input_tokens == 45
+    assert res.output_tokens == 90
+    assert res.model == "claude-3-5-sonnet-20241022"
+    mock_client.messages.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_embed_raises_not_implemented(monkeypatch):
+    """AnthropicProvider.embed() raises NotImplementedError as Anthropic has no embedding API."""
+    from unittest.mock import MagicMock
+    import app.llm.anthropic_provider as ap_module
+    from app.llm.anthropic_provider import AnthropicProvider
+
+    monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
+    mock_anthropic_mod = MagicMock()
+    monkeypatch.setattr(ap_module, "_anthropic", mock_anthropic_mod)
+
+    provider = AnthropicProvider(api_key="sk-ant-test-key", model="claude-3-5-sonnet-20241022")
+    with pytest.raises(NotImplementedError, match="Anthropic does not provide an embedding endpoint"):
+        await provider.embed(["some text to embed"])
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_health_mocked_http(monkeypatch):
+    """AnthropicProvider.health() verifies credentials with mocked models.list()."""
+    from unittest.mock import AsyncMock, MagicMock
+    import app.llm.anthropic_provider as ap_module
+    from app.llm.anthropic_provider import AnthropicProvider
+
+    monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
+
+    mock_client = MagicMock()
+    mock_client.models.list = AsyncMock(return_value=["claude-3-5-sonnet-20241022"])
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_mod.AsyncAnthropic = MagicMock(return_value=mock_client)
+    monkeypatch.setattr(ap_module, "_anthropic", mock_anthropic_mod)
+
+    provider = AnthropicProvider(api_key="sk-ant-test-key", model="claude-3-5-sonnet-20241022")
+    health_ok = await provider.health()
+    assert health_ok.ok is True
+    assert health_ok.model == "claude-3-5-sonnet-20241022"
+
+    # Simulate network or auth error
+    mock_client.models.list = AsyncMock(side_effect=Exception("401 Unauthorized: Invalid API Key"))
+    health_err = await provider.health()
+    assert health_err.ok is False
+    assert "Invalid API Key" in (health_err.error or "")
+

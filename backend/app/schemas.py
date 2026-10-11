@@ -28,11 +28,15 @@ class SessionCreate(BaseModel):
     title: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    client_id: Optional[str] = Field(None, max_length=256)
+    user_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class SessionResponse(BaseModel):
     id: uuid.UUID
     title: Optional[str] = None
+    client_id: Optional[str] = None
+    user_metadata: Dict[str, Any] = Field(default_factory=dict)
     llm_provider: str
     llm_model: str
     created_at: datetime
