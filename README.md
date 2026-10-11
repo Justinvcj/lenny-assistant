@@ -132,6 +132,38 @@ This single command:
 .\scripts\first-run.ps1
 ```
 
+### Manual Step-by-Step Setup
+If you prefer running commands manually without Makefile or PowerShell scripts:
+1. Copy environment variables:
+   ```bash
+   # Windows Command Prompt:
+   copy .env.example .env
+   # Windows PowerShell:
+   Copy-Item .env.example .env
+   # Linux / macOS:
+   cp .env.example .env
+   ```
+2. Pull required Ollama models and set context length:
+   ```bash
+   ollama pull qwen2.5:7b
+   ollama pull nomic-embed-text
+   # Recommended context length:
+   # Windows: setx OLLAMA_CONTEXT_LENGTH 16384
+   # Linux / macOS: export OLLAMA_CONTEXT_LENGTH=16384
+   ```
+3. Fetch transcript dataset:
+   ```bash
+   python scripts/fetch_data.py
+   ```
+4. Build and start containers:
+   ```bash
+   docker compose up -d --build
+   ```
+5. Ingest transcript corpus into pgvector:
+   ```bash
+   docker compose exec backend python -m scripts.ingest
+   ```
+
 Once completed, open your browser:
 - **Frontend Web UI**: http://localhost:3000
 - **Backend Health Check**: http://localhost:8000/health
@@ -154,20 +186,24 @@ Once completed, open your browser:
 
 ## 7. Environment Variables Reference
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `LLM_PROVIDER` | `ollama` | Selected LLM backend (`ollama` or `anthropic`). |
-| `LLM_MODEL` | `qwen2.5:7b` | Chat model identifier. |
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama service endpoint accessible from container. |
-| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model identifier in Ollama. |
-| `EMBEDDING_DIM` | `768` | Vector dimension matching model and pgvector schema. |
-| `ANTHROPIC_API_KEY` | *(empty)* | Optional Anthropic API secret key. |
-| `DATABASE_URL` | `postgresql+psycopg://postgres:localdev@db:5432/lenny_assistant` | SQLAlchemy async database connection URI. |
-| `RETRIEVAL_TOP_K` | `6` | Maximum number of chunks returned per RAG query. |
-| `RETRIEVAL_MIN_SCORE`| `0.62` | Empirically calibrated cosine similarity threshold. |
-| `DATA_DIR` | `/data` | Read-only path where transcripts are mounted in container. |
-| `BACKEND_PORT` | `8000` | Host port mapped to FastAPI backend. |
-| `FRONTEND_PORT` | `3000` | Host port mapped to React frontend. |
+| Variable | Requirement | Default | Purpose |
+|---|---|---|---|
+| `LLM_PROVIDER` | Required | `ollama` | Selected LLM backend (`ollama` or `anthropic`). |
+| `LLM_MODEL` | Required | `qwen2.5:7b` | Chat model identifier. |
+| `OLLAMA_BASE_URL` | Required (if Ollama) | `http://host.docker.internal:11434` | Ollama service endpoint accessible from container. |
+| `EMBEDDING_MODEL` | Required | `nomic-embed-text` | Embedding model identifier in Ollama. |
+| `EMBEDDING_DIM` | Required | `768` | Vector dimension matching model and pgvector schema. |
+| `DATABASE_URL` | Required | `postgresql+psycopg://postgres:localdev@db:5432/lenny_assistant` | SQLAlchemy async database connection URI. |
+| `ANTHROPIC_API_KEY` | Optional | *(empty)* | Anthropic API key (required only when `LLM_PROVIDER=anthropic`). |
+| `RETRIEVAL_TOP_K` | Optional | `6` | Maximum number of chunks returned per RAG query. |
+| `RETRIEVAL_MIN_SCORE`| Optional | `0.62` | Empirically calibrated cosine similarity threshold. |
+| `HISTORY_TURNS` | Optional | `6` | Conversational history window for query contextualization. |
+| `AGENT_TIMEOUT_S` | Optional | `120` | Maximum agent execution timeout in seconds before degraded fallback. |
+| `ARTIFACT_MAX_BYTES`| Optional | `200000` | Security size guard for generated HTML/Markdown artifacts. |
+| `DATA_DIR` | Required | `/data` | Read-only path where transcripts are mounted in container. |
+| `BACKEND_PORT` | Optional | `8000` | Host port mapped to FastAPI backend. |
+| `FRONTEND_PORT` | Optional | `3000` | Host port mapped to React frontend. |
+| `VITE_API_BASE_URL`| Optional | `http://localhost:8000` | API base URL baked into frontend build. |
 
 *Note: PostgreSQL is **not** published to the host port by default (`127.0.0.1:5432` is commented out) to prevent host port collisions. Backend connects over the internal Docker network.*
 
@@ -214,3 +250,23 @@ The system is strictly designed with predictable degradation and zero silent swi
 ### 4. Database Connection Refused
 - **Cause**: `lenny-db` container is still initializing or volume permissions error.
 - **Fix**: Check `docker compose logs db`. Ensure healthy status via `docker compose ps`.
+
+---
+
+## 10. Documentation & Deliverables
+
+All core architectural, security, and project specifications live under `docs/` and `playbook/`:
+
+| Document | Purpose |
+|---|---|
+| [`docs/PRD.md`](docs/PRD.md) | Product Requirements Document, user journeys, assumptions, and out-of-scope boundaries. |
+| [`docs/architecture.md`](docs/architecture.md) | Technical architecture, database schema, API contracts, deterministic router, and fallback matrices. |
+| [`docs/design.md`](docs/design.md) | UI/UX design specification, design tokens, Information Architecture, and Design Decisions table. |
+| [`docs/security.md`](docs/security.md) | Threat model (T1–T12), sandboxed iframe CSP specification, input sanitization, and prompt injection defense. |
+| [`docs/DATA_NOTES.md`](docs/DATA_NOTES.md) | Transcript corpus audit, schema inspection, speaker-turn parsing rules, and retrieval calibration. |
+| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Automated test strategy and manual browser-based verification checklist (M1–M11). |
+| [`docs/BRIEF_COMPLIANCE.md`](docs/BRIEF_COMPLIANCE.md) | Exhaustive compliance matrix auditing every brief requirement with empirical evidence and known gaps. |
+| [`transcripts/README.md`](transcripts/README.md) | Index of real agent execution transcripts, failed spikes, diagnostic traces, and codebase fixes. |
+| [`playbook/START_HERE.md`](playbook/START_HERE.md) | Candidate implementation playbook and step-by-step developer guidelines. |
+| [`playbook/PROMPTS.md`](playbook/PROMPTS.md) | Complete sequential engineering prompts and verification recipes (P1–P13). |
+

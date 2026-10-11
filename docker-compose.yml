@@ -1,7 +1,6 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: lenny-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -22,7 +21,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: lenny-backend
     restart: unless-stopped
     depends_on:
       db:
@@ -46,8 +44,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: lenny-frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
@@ -59,7 +61,6 @@ services:
   ollama:
     profiles: ["ollama"]
     image: ollama/ollama:latest
-    container_name: lenny-ollama
     ports:
       - "11434:11434"
     volumes:
