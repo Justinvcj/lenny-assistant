@@ -73,3 +73,39 @@ rules:
     description: "Tone must be direct, authoritative, and practical for product leaders and founders, avoiding corporate jargon, passive voice, and unnecessary filler."
     source: "Framework #3: Writing Headlines Readers Can't Help But Click On (Clear > Clever)"
     checked_by_code: false
+
+  - id: "R_HEADLINE"
+    name: "Ship 30 H1 Headline Principle"
+    description: "The essay must begin with an H1 headline stating who it is for, what it is about, and why to read it (the tangible payoff derived from the strongest supported claim)."
+    source: "Framework #3: Writing Headlines Readers Can't Help But Click On (The 5 Pieces Of Every Headline)"
+    checked_by_code: true
+
+  - id: "R_NO_DUPLICATE_PARAGRAPHS"
+    name: "Zero Duplicate Paragraphs"
+    description: "Each paragraph must appear exactly once. Reject duplicate or near-duplicate paragraphs (normalized text)."
+    source: "Fast Rate of Revelation & Non-Redundant Drafting"
+    checked_by_code: true
+
+  - id: "R_SPECIFIC_HEADINGS"
+    name: "Content-Specific Section Headings"
+    description: "Section headings must be specific to their section's content and claims; reject more than one heading containing the full topic string."
+    source: "Framework #4: Subheads & Skeleton Your Piece"
+    checked_by_code: true
+
+  - id: "R_SECTION_BUDGET"
+    name: "Section Word Count Budget Bounds"
+    description: "Each body section must stay within 80% to 125% of its word budget."
+    source: "Balanced modular essay construction"
+    checked_by_code: true
+
+  - id: "R_CITATION_FORMAT"
+    name: "Strict [S#] Citation Normalization"
+    description: "All citations must be strictly formatted as [S#] (or adjacent [S1][S2]); reject (S1), ([S4]...), or other variants."
+    source: "Strict RAG Grounding Protocol"
+    checked_by_code: true
+
+  - id: "R_GROUNDED_SUPPORT"
+    name: "Grounded Sentence and Attribution Verification"
+    description: "Claims must meet content word overlap threshold with cited chunks; direct quotes must be verbatim; speakers and host attribution must match transcript turn."
+    source: "Strict Practitioner Grounding & Anti-Hallucination"
+    checked_by_code: true

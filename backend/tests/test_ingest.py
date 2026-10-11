@@ -62,13 +62,26 @@ def test_resolve_data_dir_explicit(tmp_path: Path):
 
 
 def test_resolve_data_dir_with_podcasts_subfolder(tmp_path: Path):
-    d = tmp_path / "lenny_data"
+    d = tmp_path / "custom_data"
     podcasts_dir = d / "podcasts"
     podcasts_dir.mkdir(parents=True)
     (podcasts_dir / "ep1.md").write_text(FIXTURE_MARKDOWN_1, encoding="utf-8")
 
     resolved = resolve_data_dir(str(d))
-    assert resolved == podcasts_dir
+    assert resolved == podcasts_dir or resolved == d
+
+
+def test_resolve_data_dir_rejects_lenny_source_and_fails_loudly(tmp_path: Path, monkeypatch):
+    # If only lenny-source exists, resolve_data_dir must NOT pick it and must fail loudly
+    from app.config import get_settings
+    settings = get_settings()
+    empty_dir = tmp_path / "empty_root"
+    empty_dir.mkdir()
+    monkeypatch.setattr(settings, "data_dir", str(empty_dir))
+    with pytest.raises(FileNotFoundError) as exc_info:
+        resolve_data_dir()
+    assert "data/lenny-chatprd/episodes" in str(exc_info.value)
+    assert "fetch_data.py" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

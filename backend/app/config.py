@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     retrieval_min_score: float = 0.62
     history_turns: int = 6
     agent_timeout_s: int = 120
+    artifact_timeout_s: int = 90
+    essay_timeout_s: int = 420
     artifact_max_bytes: int = 200000
 
     # CORS & Application Settings

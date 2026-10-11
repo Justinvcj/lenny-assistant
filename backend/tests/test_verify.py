@@ -6,11 +6,15 @@ import pytest
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from app.agent.verify import (
     VerificationResult,
+    check_unsupported_names,
+    clean_heading_profanity,
     extract_citation_tags,
     is_refusal_response,
+    normalize_citations,
     resolve_citations,
     strip_invalid_tags,
     verify_citations,
+    verify_speaker_attribution,
 )
 from app.rag.retrieval import RetrievalResult
 from app.schemas import CitationItem
@@ -305,3 +309,111 @@ def test_pipeline_markdown_formatting_preserved():
     assert "- First point about activation [S1]." in res.cleaned_text
     assert "- Second point that was phantom." in res.cleaned_text
     assert "[S99]" not in res.cleaned_text
+
+
+# --- Suite 7: Unsupported Name Attribution Detection ---
+
+def test_unsupported_names_supported_guest():
+    """Verify supported guest present in sources is not flagged as unsupported."""
+    source = make_mock_source(1, title="Elena Verna Masterclass", guest="Elena Verna")
+    ans = "Elena Verna discusses growth loops and product-led growth [S1]."
+    unsupported = check_unsupported_names(ans, [source])
+    assert unsupported == []
+
+
+def test_unsupported_names_host_ignored():
+    """Verify podcast host Lenny Rachitsky is never flagged as an unsupported guest."""
+    source = make_mock_source(1, title="Product Leadership", guest="Casey Winters")
+    ans = "Lenny Rachitsky asked Casey Winters about scaling product teams [S1]."
+    unsupported = check_unsupported_names(ans, [source])
+    assert unsupported == []
+
+
+def test_unsupported_names_unsupported_guest_flagged():
+    """Verify guest in roster not present in sources is identified as unsupported."""
+    source = make_mock_source(1, title="Sean Ellis on Growth", guest="Sean Ellis")
+    ans = "Hila Qu explains that retention depends on customer activation [S1]."
+    unsupported = check_unsupported_names(ans, [source])
+    assert "Hila Qu" in unsupported
+
+
+def test_unsupported_names_partial_match():
+    """Verify partial surname/distinctive name match for roster guest is detected."""
+    source = make_mock_source(1, title="General Product Strategy", guest="Marty Cagan")
+    ans = "According to Verna, product-led sales works best with high self-serve volume [S1]."
+    unsupported = check_unsupported_names(ans, [source])
+    assert "Elena Verna" in unsupported
+
+
+def test_unsupported_names_supported_in_passage():
+    """Verify name appearing in source text (even if not guest field) is accepted."""
+    source = make_mock_source(1, title="Interview", guest="Unknown")
+    source.text = "Rahul Vohra shared the Superhuman product-market fit engine."
+    ans = "Rahul Vohra designed the 40% very disappointed PMF metric [S1]."
+    unsupported = check_unsupported_names(ans, [source])
+    assert unsupported == []
+
+
+def test_unsupported_names_custom_roster():
+    """Verify check_unsupported_names works with a custom roster set."""
+    custom_roster = {"Alice Wonder", "Bob Builder"}
+    source = make_mock_source(1, title="Title", guest="Charlie")
+    ans = "Alice Wonder suggested building in public."
+    unsupported = check_unsupported_names(ans, [source], known_roster=custom_roster)
+    assert unsupported == ["Alice Wonder"]
+
+
+# --- Suite 8: Addendum Round 2 Defect Regression Tests ---
+
+def test_citation_normalization_exact_evidence_strings():
+    """Verify bare S3/S4, paren citations, and comma-separated brackets normalize to [S#]."""
+    text1 = "Users flow through the doors. S3 and activate in the fourth week. S4"
+    norm1 = normalize_citations(text1)
+    assert norm1 == "Users flow through the doors. [S3] and activate in the fourth week. [S4]"
+
+    text2 = "Elena Verna discusses growth loops [S3, S4, S5]."
+    norm2 = normalize_citations(text2)
+    assert norm2 == "Elena Verna discusses growth loops [S3][S4][S5]."
+
+    text3 = "As Sean Ellis notes ([S4], 00:48:00) during the conversation."
+    norm3 = normalize_citations(text3)
+    assert norm3 == "As Sean Ellis notes [S4] during the conversation."
+
+    text4 = "According to Hila Qu (S1), activation drives retention."
+    norm4 = normalize_citations(text4)
+    assert norm4 == "According to Hila Qu [S1], activation drives retention."
+
+
+def test_speaker_attribution_corrects_lenny_to_sean_ellis():
+    """Regression: Quote spoken by Sean Ellis attributed to Lenny Rachitsky must be corrected."""
+    chunk_text = (
+        "Lenny Rachitsky (01:02:45):\nWhat is the key metric?\n\n"
+        "Sean Ellis (01:02:58):\n"
+        "when do I think they've had a good enough experience with the product to really know it?\n"
+    )
+    source = make_mock_source(1, title="Sean Ellis on Growth", guest="Sean Ellis")
+    source.text = chunk_text
+
+    essay_text = (
+        'As Lenny Rachitsky emphasized, "when do I think they\'ve had a good enough experience with the product to really know it?" [S1].'
+    )
+
+    corrected, mismatches = verify_speaker_attribution(essay_text, [source])
+    assert len(mismatches) == 1
+    assert "Sean Ellis" in mismatches[0]
+    assert "Lenny Rachitsky" in mismatches[0]
+    assert "Sean Ellis emphasized" in corrected
+    assert "Lenny Rachitsky" not in corrected
+
+
+def test_clean_heading_profanity_rewrites_law_of_shitty_clickthroughs():
+    """Verify profanity/slang in headings is rewritten while preserved in body text in quotes."""
+    essay_text = (
+        "# Growth Playbook\n\n"
+        "## The Law of Shitty Clickthroughs\n\n"
+        'Andrew Chen coined the "Law of Shitty Clickthroughs" to describe diminishing returns.'
+    )
+    cleaned = clean_heading_profanity(essay_text)
+    assert "## Feedback Loops and Diminishing Returns" in cleaned
+    assert 'Andrew Chen coined the "Law of Shitty Clickthroughs"' in cleaned
+

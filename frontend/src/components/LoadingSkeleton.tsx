@@ -38,7 +38,14 @@ export const LoadingSkeleton: React.FC<LoadingSkeletonProps> = ({
   }, [startTime, propElapsedSeconds]);
 
   const elapsed = propElapsedSeconds !== undefined ? propElapsedSeconds : internalElapsed;
-  const currentStage = stage || (elapsed < 4 ? 'Searching transcripts...' : 'Synthesizing answer...');
+  const currentStage = stage || (() => {
+    if (elapsed < 4) return 'Searching transcripts...';
+    if (elapsed < 15) return 'Synthesizing answer...';
+    if (elapsed < 35) return 'Structuring outline & key points...';
+    if (elapsed < 70) return 'Drafting grounded sections & citations...';
+    if (elapsed < 110) return 'Validating length & Ship 30 rules...';
+    return 'Polishing and formatting output...';
+  })();
 
   return (
     <div

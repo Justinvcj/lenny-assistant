@@ -51,11 +51,27 @@ RE_FOLLOWUP_PRONOUNS = re.compile(
     re.IGNORECASE,
 )
 
+# Regex for detecting explicit references to a previous assistant answer
+RE_PREVIOUS_ANSWER_REF = re.compile(
+    r"(?:"
+    r"\b(?:turn|make|convert|transform|summarize|rewrite|condense|expand|format)\s+(?:that|this|it)\s+(?:into|as|to|a\b|an\b)?"
+    r"|\b(?:turn\s+into|make\s+into)\b"
+    r"|\b(?:based\s+on\s+(?:the\s+above|this|that|what\s+you\s+(?:just\s+)?said|your\s+(?:previous\s+)?answer))\b"
+    r"|\b(?:from\s+(?:the\s+above|this|that|what\s+you\s+(?:just\s+)?said))\b"
+    r"|\b(?:the\s+above|this\s+answer|the\s+previous\s+answer|your\s+previous\s+answer|what\s+you\s+just\s+said|what\s+you\s+said)\b"
+    r"|\b(?:make\s+that\s+a\b|make\s+this\s+a\b|summarize\s+that\b|summarize\s+this\b)"
+    r"|\b(?:about\s+that|on\s+that|from\s+that|for\s+that)\b"
+    r")",
+    re.IGNORECASE,
+)
 
-def format_source_blocks(sources: Sequence[Any]) -> str:
+
+def format_source_blocks(sources: Sequence[Any], max_chars_per_source: int = 1000) -> str:
     """Format retrieved sources into numbered <source id="S#"> blocks.
 
     Duck types over RetrievalResult instances, dicts, or chunk-like objects.
+    Caps each source passage at max_chars_per_source (default 1,000 chars) to maintain
+    input tokens <= 4,500 and reduce LLM inference latency.
     """
     if not sources:
         return "<sources>\nNo sources available.\n</sources>"
@@ -71,10 +87,14 @@ def format_source_blocks(sources: Sequence[Any]) -> str:
             guest = getattr(source, "guest", None)
             text = getattr(source, "text", "")
 
+        clean_text = text.strip()
+        if len(clean_text) > max_chars_per_source:
+            clean_text = clean_text[:max_chars_per_source].rstrip() + "..."
+
         guest_info = f" | Guest: {guest}" if guest else " | Guest: Unknown"
         lines.append(f'<source id="S{idx}" untrusted>')
         lines.append(f"Episode: {title}{guest_info}")
-        lines.append(text.strip())
+        lines.append(clean_text)
         lines.append("</source>")
 
     lines.append("</sources>")
@@ -148,25 +168,29 @@ def is_standalone_query(message: str) -> bool:
 
     Returns:
         True if the query is self-contained and does not require antecedent resolution.
-        False if the query is short, elliptical, or contains anaphoric references.
+        False if the query contains anaphoric references or refers to a previous answer.
     """
     clean = message.strip()
     if not clean:
         return True
 
+    # 1. Any reference to a previous answer is NOT standalone
+    if RE_PREVIOUS_ANSWER_REF.search(clean):
+        return False
+
     words = clean.split()
     word_count = len(words)
 
-    # 1. Very short messages are almost always conversational follow-ups
+    # 2. Very short messages are almost always conversational follow-ups
     if word_count <= 4:
         return False
 
-    # 2. Starts with explicit follow-up phrases
+    # 3. Starts with explicit follow-up phrases
     if RE_FOLLOWUP_PREFIX.search(clean):
         return False
 
-    # 3. Short to medium messages containing anaphoric follow-up pronouns
-    if word_count <= 10 and RE_FOLLOWUP_PRONOUNS.search(clean):
+    # 4. Short to medium messages containing anaphoric follow-up pronouns
+    if word_count <= 12 and RE_FOLLOWUP_PRONOUNS.search(clean):
         return False
 
     return True

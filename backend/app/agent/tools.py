@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from app.agent.router import Intent
+
 logger = logging.getLogger(__name__)
 
 ToolResult = Dict[str, Any]
@@ -29,6 +31,51 @@ def _text_result(text: str) -> ToolResult:
     return {"content": [{"type": "text", "text": text}]}
 
 
+def normalize_artifact_type(raw_type: Optional[str]) -> str:
+    """Normalize user or model artifact type aliases to 'html' or 'markdown'.
+
+    Aliases:
+      html, htm, page, webpage, html page, one-page, one-pager, landing, table, dashboard -> html
+      markdown, md, doc, document, text, notes, report -> markdown
+    """
+    if not raw_type:
+        return "html"
+    s = str(raw_type).strip().lower()
+    if s in (
+        "html", "htm", "page", "webpage", "html page", "one-page", "one-pager",
+        "one pager", "landing", "landing page", "table", "dashboard",
+    ):
+        return "html"
+    if s in ("markdown", "md", "doc", "document", "text", "notes", "report"):
+        return "markdown"
+    if "html" in s or "webpage" in s:
+        return "html"
+    if "markdown" in s:
+        return "markdown"
+    return s
+
+
+CREATE_ARTIFACT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "Short descriptive title of the artifact",
+        },
+        "html": {
+            "type": "string",
+            "description": "The full content of the artifact. For html, full valid HTML document. For markdown, full valid markdown.",
+        },
+        "artifact_type": {
+            "type": "string",
+            "enum": ["html", "markdown"],
+            "description": "The artifact type. Allowed values are strictly 'html' or 'markdown'. Use 'html' for page/one-page/landing/webpage/table/dashboard; 'markdown' for doc/document/notes.",
+        },
+    },
+    "required": ["title", "html", "artifact_type"],
+}
+
+
 # ---------------------------------------------------------------------------
 # Per-request tool factory
 # ---------------------------------------------------------------------------
@@ -36,19 +83,22 @@ def _text_result(text: str) -> ToolResult:
 
 def build_tools(
     *,
-    db: Any,
-    embedder: Any,
-    provider: Any,
+    db: Any = None,
+    embedder: Any = None,
+    provider: Any = None,
     sources: Optional[List[Any]] = None,
     top_k: int = 6,
     min_score: float = 0.58,
     max_artifact_bytes: int = 200_000,
+    intent: Optional[Intent] = None,
+    artifact_sink: Optional[Dict[str, Any]] = None,
 ) -> List[SdkMcpTool[Any]]:
-    """Build the three `@tool`-wrapped SdkMcpTool instances for one request.
+    """Build the `@tool`-wrapped SdkMcpTool instances for one request.
 
-    Each tool closes over the given dependencies so later SDK invocations
-    (which pass only the model-synthesised args dict) still reach the real
-    DB, embedder, provider, and the pre-retrieved sources.
+    When intent is supplied, returns ONLY the tool for that intent (SPEC D2):
+      QA       → [search_transcripts]
+      ESSAY    → [generate_ship30_essay]
+      ARTIFACT → [create_artifact]
     """
     captured_sources = list(sources) if sources else []
 
@@ -86,31 +136,52 @@ def build_tools(
     @tool(
         "create_artifact",
         "Package generated HTML or Markdown content into a renderable artifact. "
-        "Use this only when the user asked for a page, one-pager, table, or doc.",
-        {"title": str, "html": str, "artifact_type": str},
+        "Allowed artifact_type values: 'html' (for pages/one-pagers/landing pages/tables) or 'markdown' (for documents/notes).",
+        CREATE_ARTIFACT_SCHEMA,
     )
     async def _create_artifact(args: Dict[str, Any]) -> ToolResult:
-        title = args.get("title", "Generated Artifact")
-        body = args.get("html", "")
-        clean_type = (args.get("artifact_type") or "html").strip().lower()
-        if clean_type not in ("html", "markdown"):
-            clean_type = "html"
-        encoded = body.encode("utf-8")
-        truncated = len(encoded) > max_artifact_bytes
-        if truncated:
-            body = encoded[:max_artifact_bytes].decode("utf-8", errors="replace")
-        payload = {
-            "title": title,
-            "html": body,
-            "type": clean_type,
-            "size_bytes": min(len(encoded), max_artifact_bytes),
-            "truncated": truncated,
-        }
-        logger.info("create_artifact: title=%r type=%s bytes=%d", title, clean_type, payload["size_bytes"])
-        return {
-            "content": [{"type": "text", "text": f"Artifact '{title}' created ({payload['size_bytes']} bytes)."}],
-            "_artifact": payload,
-        }
+        try:
+            title = (args.get("title") or "Generated Artifact").strip()
+            body = args.get("html") or args.get("content") or ""
+            raw_type = args.get("artifact_type") or args.get("type") or "html"
+            clean_type = normalize_artifact_type(raw_type)
+
+            if clean_type not in ("html", "markdown"):
+                return {
+                    "content": [{"type": "text", "text": f"Error: Invalid artifact_type '{raw_type}'. Allowed values: 'html' or 'markdown'. Please retry with a valid type."}],
+                    "is_error": True,
+                }
+
+            if not body:
+                return {
+                    "content": [{"type": "text", "text": "Error: 'html' (content) argument cannot be empty. Please provide the document content."}],
+                    "is_error": True,
+                }
+
+            encoded = body.encode("utf-8")
+            truncated = len(encoded) > max_artifact_bytes
+            if truncated:
+                body = encoded[:max_artifact_bytes].decode("utf-8", errors="replace")
+            payload = {
+                "title": title,
+                "html": body,
+                "type": clean_type,
+                "size_bytes": min(len(encoded), max_artifact_bytes),
+                "truncated": truncated,
+            }
+            if artifact_sink is not None:
+                artifact_sink["artifact"] = payload
+            logger.info("create_artifact: title=%r type=%s bytes=%d", title, clean_type, payload["size_bytes"])
+            return {
+                "content": [{"type": "text", "text": f"Artifact '{title}' created ({payload['size_bytes']} bytes, type={clean_type})."}],
+                "_artifact": payload,
+            }
+        except Exception as exc:
+            logger.error("create_artifact failed with exception: %s", exc, exc_info=True)
+            return {
+                "content": [{"type": "text", "text": f"Error creating artifact: {str(exc)}. Please retry with valid arguments: title, html, and artifact_type ('html' or 'markdown')."}],
+                "is_error": True,
+            }
 
     @tool(
         "generate_ship30_essay",
@@ -133,22 +204,34 @@ def build_tools(
             f"Essay drafted ({result.word_count} words). "
             f"Validation: {'passed' if result.report.passed else 'failed ' + ','.join(result.report.failed_rules)}."
         )
+        essay_payload = {
+            "title": f"Ship 30 Essay: {topic[:60]}",
+            "html": result.content,
+            "type": "markdown",
+            "size_bytes": len(result.content.encode("utf-8")),
+            "truncated": False,
+            "word_count": result.word_count,
+            "validation_report": {
+                "passed": result.report.passed,
+                "failed_rules": result.report.failed_rules,
+            },
+            "repaired": result.repaired,
+        }
+        if artifact_sink is not None:
+            artifact_sink["artifact"] = essay_payload
         return {
             "content": [{"type": "text", "text": summary}],
-            "_artifact": {
-                "title": f"Ship 30 Essay: {topic[:60]}",
-                "html": result.content,
-                "type": "markdown",
-                "size_bytes": len(result.content.encode("utf-8")),
-                "truncated": False,
-                "word_count": result.word_count,
-                "validation_report": {
-                    "passed": result.report.passed,
-                    "failed_rules": result.report.failed_rules,
-                },
-                "repaired": result.repaired,
-            },
+            "_artifact": essay_payload,
         }
+
+    if intent is not None:
+        intent_key = intent.value if isinstance(intent, Intent) else str(intent).upper()
+        if intent_key == "QA":
+            return [_search_transcripts]
+        elif intent_key == "ESSAY":
+            return [_generate_ship30_essay]
+        elif intent_key == "ARTIFACT":
+            return [_create_artifact]
 
     return [_search_transcripts, _create_artifact, _generate_ship30_essay]
 
@@ -163,11 +246,14 @@ def build_tool_server(
     min_score: float = 0.58,
     max_artifact_bytes: int = 200_000,
     server_name: str = "lenny",
+    intent: Optional[Intent] = None,
+    artifact_sink: Optional[Dict[str, Any]] = None,
 ) -> McpSdkServerConfig:
-    """Wrap `build_tools` as a `create_sdk_mcp_server` config."""
+    """Wrap `build_tools` as a `create_sdk_mcp_server` config narrowed to the request intent."""
     tools = build_tools(
         db=db, embedder=embedder, provider=provider, sources=sources,
         top_k=top_k, min_score=min_score, max_artifact_bytes=max_artifact_bytes,
+        intent=intent, artifact_sink=artifact_sink,
     )
     return create_sdk_mcp_server(name=server_name, version="1.0.0", tools=tools)
 
@@ -204,7 +290,7 @@ async def search_transcripts(
 async def create_artifact(
     title: str, html: str, *, artifact_type: str = "html", max_bytes: int = 200_000,
 ) -> Dict[str, Any]:
-    clean_type = artifact_type.strip().lower()
+    clean_type = normalize_artifact_type(artifact_type)
     if clean_type not in ("html", "markdown"):
         from app.errors import AppException
         raise AppException(
@@ -261,6 +347,6 @@ TOOL_REGISTRY: Dict[str, Any] = {
 
 INTENT_TOOLS: Dict[str, List[str]] = {
     "QA": ["search_transcripts"],
-    "ESSAY": ["search_transcripts", "generate_ship30_essay"],
-    "ARTIFACT": ["search_transcripts", "create_artifact"],
+    "ESSAY": ["generate_ship30_essay"],
+    "ARTIFACT": ["create_artifact"],
 }

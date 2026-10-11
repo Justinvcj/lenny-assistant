@@ -199,17 +199,25 @@ async def test_async_methods_and_global_client_override():
 
 def test_live_ollama_integration():
     """Live integration test against host Ollama instance (skipped if unreachable)."""
+    import os
     import socket
+    from urllib.parse import urlparse
+    from app.config import get_settings
+
+    base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
 
     s = socket.socket()
-    s.settimeout(0.5)
+    s.settimeout(1.0)
     try:
-        s.connect(("localhost", 11434))
+        s.connect((host, port))
         s.close()
     except Exception:
-        pytest.skip("Ollama is not reachable on localhost:11434")
+        pytest.skip(f"Ollama is not reachable on {host}:{port}")
 
-    client = OllamaEmbeddingsClient(base_url="http://localhost:11434")
+    client = OllamaEmbeddingsClient(base_url=base_url)
     dim = client.check_embedding_dim(768)
     assert dim == 768
 

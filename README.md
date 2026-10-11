@@ -199,6 +199,7 @@ Once completed, open your browser:
 | `RETRIEVAL_MIN_SCORE`| Optional | `0.62` | Empirically calibrated cosine similarity threshold. |
 | `HISTORY_TURNS` | Optional | `6` | Conversational history window for query contextualization. |
 | `AGENT_TIMEOUT_S` | Optional | `120` | Maximum agent execution timeout in seconds before degraded fallback. |
+| `ESSAY_TIMEOUT_S` | Optional | `420` | Extended timeout in seconds for multi-section Ship 30 essay generation. |
 | `ARTIFACT_MAX_BYTES`| Optional | `200000` | Security size guard for generated HTML/Markdown artifacts. |
 | `DATA_DIR` | Required | `/data` | Read-only path where transcripts are mounted in container. |
 | `BACKEND_PORT` | Optional | `8000` | Host port mapped to FastAPI backend. |

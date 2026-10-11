@@ -73,21 +73,54 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   // Assistant Answer
   const formattedLatency = formatLatency(message.latency_ms);
 
+  const degradedReason = useMemo(() => {
+    if (!message.degraded || !message.tool_trace) return null;
+    for (const trace of message.tool_trace) {
+      if (trace && trace.degraded_reason) {
+        return String(trace.degraded_reason);
+      }
+    }
+    return null;
+  }, [message.degraded, message.tool_trace]);
+
   return (
     <div className="message-item">
       <div className="message-assistant" role="article" aria-label="Assistant Response">
-        {/* Meta badges: Degraded mode & Latency */}
-        {(message.degraded || formattedLatency) && (
+        {/* Meta badges: Degraded mode, Warnings & Latency */}
+        {(message.degraded || formattedLatency || (message.warnings && message.warnings.length > 0)) && (
           <div className="message-meta">
             {message.degraded && (
               <span
                 className="badge-degraded"
-                title="Answered in degraded fallback mode without agent runtime"
+                title={degradedReason ? `Degraded: ${degradedReason}` : "Answered in degraded fallback mode without agent runtime"}
               >
                 <AlertTriangle size={12} style={{ marginRight: '4px' }} aria-hidden="true" />
                 Degraded
               </span>
             )}
+            {message.warnings && message.warnings.map((w, idx) => (
+              <span
+                key={idx}
+                className="badge-warning"
+                data-testid="unsupported-name-warning"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  fontSize: '0.75rem',
+                  color: '#b45309',
+                  backgroundColor: '#fef3c7',
+                  border: '1px solid #fde68a',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontWeight: 500,
+                  gap: '4px',
+                }}
+                title={w}
+              >
+                <AlertTriangle size={12} aria-hidden="true" />
+                {w}
+              </span>
+            ))}
             {formattedLatency && (
               <span
                 style={{

@@ -165,3 +165,60 @@ async def test_tool_create_artifact_invalid_type():
     with pytest.raises(AppException) as exc_info:
         await create_artifact("Title", "Content", artifact_type="exe")
     assert exc_info.value.code == "invalid_artifact_type"
+
+
+def test_normalize_artifact_type_aliases():
+    """Verify alias normalization for html and markdown types."""
+    from app.agent.tools import normalize_artifact_type
+
+    # HTML aliases
+    for alias in ["page", "webpage", "html page", "one-page", "one-pager", "htm", "HTML", "landing", "landing page"]:
+        assert normalize_artifact_type(alias) == "html", f"Failed on html alias: {alias}"
+
+    # Markdown aliases
+    for alias in ["md", "doc", "document", "markdown", "MARKDOWN", "notes", "report"]:
+        assert normalize_artifact_type(alias) == "markdown", f"Failed on markdown alias: {alias}"
+
+    # Fallback default
+    assert normalize_artifact_type("") == "html"
+    assert normalize_artifact_type(None) == "html"
+
+
+def test_derive_artifact_type_from_prompt():
+    """Verify deterministic derivation of artifact type from user message."""
+    from app.routers.chat import derive_artifact_type_from_prompt
+
+    # HTML derivatives
+    assert derive_artifact_type_from_prompt("Make a one-page HTML summary of that") == "html"
+    assert derive_artifact_type_from_prompt("Create a landing page for PMs") == "html"
+    assert derive_artifact_type_from_prompt("Turn this into a one-pager") == "html"
+    assert derive_artifact_type_from_prompt("Format as a webpage") == "html"
+
+    # Markdown derivatives
+    assert derive_artifact_type_from_prompt("Make a markdown doc summarizing the takeaways") == "markdown"
+    assert derive_artifact_type_from_prompt("Write a Ship 30 essay on PMF") == "markdown"
+    assert derive_artifact_type_from_prompt("Give me a comparison table in markdown") == "markdown"
+    assert derive_artifact_type_from_prompt("Summarize the discussion") == "markdown"
+
+
+@pytest.mark.asyncio
+async def test_tool_create_artifact_handler_normalizes_and_returns_artifact():
+    """Verify in-process tool server create_artifact normalizes aliases and returns payload."""
+    from app.agent.tools import build_tools
+    from app.agent.router import Intent
+
+    tools = build_tools(intent=Intent.ARTIFACT)
+    assert len(tools) == 1
+    create_art_tool = tools[0]
+
+    # Call with alias 'page'
+    res = await create_art_tool.handler({"title": "Test Page", "html": "<h1>Hello</h1>", "artifact_type": "page"})
+    assert res.get("is_error") is not True
+    assert "_artifact" in res
+    assert res["_artifact"]["type"] == "html"
+    assert res["_artifact"]["title"] == "Test Page"
+
+    # Call with empty body returns error result for model retry
+    err_res = await create_art_tool.handler({"title": "Empty Page", "html": ""})
+    assert err_res.get("is_error") is True
+    assert "cannot be empty" in err_res["content"][0]["text"]

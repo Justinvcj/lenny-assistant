@@ -62,6 +62,7 @@ export interface Message {
   created_at: string;
   artifact?: Record<string, any> | null;
   artifacts?: Array<Record<string, any>> | null;
+  warnings?: string[];
 }
 
 export interface Session {
@@ -84,6 +85,7 @@ export interface ChatResponse {
   degraded: boolean;
   latency_ms?: number | null;
   artifact?: Record<string, any> | null;
+  warnings?: string[];
 }
 
 export interface ArtifactResponse {

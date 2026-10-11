@@ -182,3 +182,45 @@ async def test_tool_factory_search_handler_uses_bound_db(monkeypatch):
     assert captured["db"] is sentinel_db
     assert captured["embedder"] is sentinel_embedder
     assert captured["query"] == "retention"
+
+
+@pytest.mark.asyncio
+async def test_tool_server_qa_intent_narrows_to_search_transcripts_only():
+    """QA intent must narrow MCP tools to search_transcripts only."""
+    from mcp.types import ListToolsRequest
+
+    server_cfg = build_tool_server(
+        db=None, embedder=None, provider=None, sources=[], intent=Intent.QA,
+    )
+    handler = server_cfg["instance"].request_handlers[ListToolsRequest]
+    res = await handler(ListToolsRequest(method="tools/list"))
+    tool_names = [t.name for t in res.root.tools]
+    assert tool_names == ["search_transcripts"]
+
+
+@pytest.mark.asyncio
+async def test_tool_server_essay_intent_narrows_to_ship30_only():
+    """ESSAY intent must narrow MCP tools to generate_ship30_essay only."""
+    from mcp.types import ListToolsRequest
+
+    server_cfg = build_tool_server(
+        db=None, embedder=None, provider=None, sources=[], intent=Intent.ESSAY,
+    )
+    handler = server_cfg["instance"].request_handlers[ListToolsRequest]
+    res = await handler(ListToolsRequest(method="tools/list"))
+    tool_names = [t.name for t in res.root.tools]
+    assert tool_names == ["generate_ship30_essay"]
+
+
+@pytest.mark.asyncio
+async def test_tool_server_artifact_intent_narrows_to_create_artifact_only():
+    """ARTIFACT intent must narrow MCP tools to create_artifact only."""
+    from mcp.types import ListToolsRequest
+
+    server_cfg = build_tool_server(
+        db=None, embedder=None, provider=None, sources=[], intent=Intent.ARTIFACT,
+    )
+    handler = server_cfg["instance"].request_handlers[ListToolsRequest]
+    res = await handler(ListToolsRequest(method="tools/list"))
+    tool_names = [t.name for t in res.root.tools]
+    assert tool_names == ["create_artifact"]

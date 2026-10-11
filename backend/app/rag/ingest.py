@@ -51,33 +51,51 @@ def resolve_data_dir(data_dir_arg: Optional[str] = None) -> Path:
     """Resolve the transcript directory across Docker container and Windows host environments."""
     settings = get_settings()
 
-    candidates: List[Path] = []
     if data_dir_arg:
-        candidates.append(Path(data_dir_arg))
-
-    # Docker container volume mount and host paths
-    cwd = Path.cwd()
-    candidates.extend(
-        [
-            Path(settings.data_dir) / "lenny-chatprd" / "episodes",
-            Path(settings.data_dir) / "lenny-chatprd",
-            Path(settings.data_dir) / "episodes",
-            Path(settings.data_dir),
-            cwd / "data" / "lenny-chatprd" / "episodes",
-            cwd / "data" / "lenny-chatprd",
-            cwd / "data" / "episodes",
-            cwd / "data",
-            cwd.parent / "data" / "lenny-chatprd" / "episodes",
-            cwd.parent / "data" / "lenny-chatprd",
-            cwd.parent / "data" / "episodes",
-            cwd.parent / "data",
-            # Legacy paths fallback
-            Path(settings.data_dir) / "lenny-source" / "podcasts",
-            cwd / "data" / "lenny-source" / "podcasts",
-            cwd / "data" / "lenny-source",
-            cwd.parent / "data" / "lenny-source" / "podcasts",
+        base = Path(data_dir_arg)
+        candidates = [
+            base / "lenny-chatprd" / "episodes",
+            base / "lenny-chatprd",
+            base / "episodes",
+            base / "podcasts",
+            base,
         ]
-    )
+        for cand in candidates:
+            if cand.is_dir():
+                if (cand / "episodes").is_dir() and any((cand / "episodes").rglob("*.md")):
+                    return cand / "episodes"
+                if (cand / "podcasts").is_dir() and any((cand / "podcasts").glob("*.md")):
+                    return cand / "podcasts"
+                if any(cand.glob("*.md")):
+                    return cand
+        raise FileNotFoundError(
+            "Transcript data directory not found. Expected 'data/lenny-chatprd/episodes' containing markdown transcripts. "
+            "Please run 'python scripts/fetch_data.py' or 'git clone --depth 1 https://github.com/ChatPRD/lennys-podcast-transcripts data/lenny-chatprd' to fetch the ChatPRD corpus."
+        )
+
+    configured_dir = Path(settings.data_dir)
+    candidates = [
+        configured_dir / "lenny-chatprd" / "episodes",
+        configured_dir / "lenny-chatprd",
+        configured_dir / "episodes",
+        configured_dir / "podcasts",
+        configured_dir,
+    ]
+    # If configured data_dir is default /data, also check cwd and cwd.parent for host dev
+    if str(settings.data_dir).rstrip("/\\") in ("/data", "data"):
+        cwd = Path.cwd()
+        candidates.extend(
+            [
+                cwd / "data" / "lenny-chatprd" / "episodes",
+                cwd / "data" / "lenny-chatprd",
+                cwd / "data" / "episodes",
+                cwd / "data",
+                cwd.parent / "data" / "lenny-chatprd" / "episodes",
+                cwd.parent / "data" / "lenny-chatprd",
+                cwd.parent / "data" / "episodes",
+                cwd.parent / "data",
+            ]
+        )
 
     for cand in candidates:
         if cand.is_dir():
@@ -85,10 +103,13 @@ def resolve_data_dir(data_dir_arg: Optional[str] = None) -> Path:
                 return cand / "episodes"
             if (cand / "podcasts").is_dir() and any((cand / "podcasts").glob("*.md")):
                 return cand / "podcasts"
-            if any(cand.rglob("*.md")):
+            if any(cand.glob("*.md")):
                 return cand
 
-    return Path(data_dir_arg or settings.data_dir)
+    raise FileNotFoundError(
+        "Transcript data directory not found. Expected 'data/lenny-chatprd/episodes' containing markdown transcripts. "
+        "Please run 'python scripts/fetch_data.py' or 'git clone --depth 1 https://github.com/ChatPRD/lennys-podcast-transcripts data/lenny-chatprd' to fetch the ChatPRD corpus."
+    )
 
 
 async def _get_embeddings_for_chunks(

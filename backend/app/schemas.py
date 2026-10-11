@@ -14,6 +14,7 @@ class MessageBase(BaseModel):
     tool_trace: List[Dict[str, Any]] = Field(default_factory=list)
     degraded: bool = False
     latency_ms: Optional[int] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 class MessageResponse(MessageBase):
@@ -69,6 +70,7 @@ class ChatResponse(BaseModel):
     degraded: bool = False
     latency_ms: Optional[int] = None
     artifact: Optional[Dict[str, Any]] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 class ArtifactCreate(BaseModel):

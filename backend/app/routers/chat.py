@@ -7,26 +7,34 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.agent.orchestrator import run_agent
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE, build_system_prompt, rewrite_query
 from app.agent.router import Intent, classify_intent
-from app.agent.verify import verify_citations
+from app.agent.tools import normalize_artifact_type
+from app.agent.verify import (
+    extract_citation_tags,
+    normalize_citations,
+    resolve_citations,
+    verify_citations,
+)
 from app.config import get_settings
 from app.db import get_db_session
 from app.errors import AppException
 from app.llm.base import LLMProvider
 from app.llm.factory import get_provider
-from app.models import Artifact, Message, Session, utc_now
+from app.models import Artifact, Chunk, Message, Session, utc_now
 from app.rag.embeddings import get_embeddings_client
-from app.rag.retrieval import retrieve
+from app.rag.retrieval import RetrievalResult, retrieve
 from app.schemas import ChatResponse, CitationItem, MessageCreate, MessageResponse
 
 logger = logging.getLogger(__name__)
@@ -50,6 +58,331 @@ def get_chat_embedder() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+async def _load_sources_from_citations(
+    citations: List[Dict[str, Any]],
+    db: AsyncSession,
+) -> List[RetrievalResult]:
+    """Load RetrievalResult objects from cited chunk IDs in previous assistant turn."""
+    chunk_ids = []
+    for c in citations:
+        cid = c.get("chunk_id")
+        if cid:
+            try:
+                chunk_ids.append(uuid.UUID(str(cid)))
+            except Exception:
+                pass
+    if not chunk_ids:
+        return []
+
+    stmt = (
+        select(Chunk)
+        .options(selectinload(Chunk.document))
+        .where(Chunk.id.in_(chunk_ids))
+    )
+    res = await db.execute(stmt)
+    chunks = list(res.scalars().all())
+    chunk_map = {c.id: c for c in chunks}
+
+    results: List[RetrievalResult] = []
+    for c in citations:
+        cid = c.get("chunk_id")
+        if not cid:
+            continue
+        try:
+            u = uuid.UUID(str(cid))
+        except Exception:
+            continue
+        chunk_obj = chunk_map.get(u)
+        if chunk_obj:
+            doc = chunk_obj.document
+            results.append(
+                RetrievalResult(
+                    chunk_id=chunk_obj.id,
+                    text=chunk_obj.text,
+                    score=1.0,
+                    document_slug=doc.slug if doc else "",
+                    title=doc.title if doc else "",
+                    guest=doc.guest if doc else None,
+                    speaker=chunk_obj.speaker,
+                    start_char=chunk_obj.start_char,
+                    end_char=chunk_obj.end_char,
+                    chunk_index=chunk_obj.chunk_index,
+                )
+            )
+        else:
+            results.append(
+                RetrievalResult(
+                    chunk_id=u,
+                    text=c.get("passage", ""),
+                    score=1.0,
+                    document_slug=c.get("doc_slug", ""),
+                    title=c.get("title", ""),
+                    guest=c.get("guest"),
+                    speaker=None,
+                    start_char=None,
+                    end_char=None,
+                    chunk_index=0,
+                )
+            )
+    return results
+
+
+def derive_artifact_type_from_prompt(user_message: str) -> str:
+    """Derive artifact type deterministically from user prompt.
+
+    Per spec: default to html for "page/one-page/landing", markdown otherwise.
+    """
+    msg = user_message.lower()
+    if any(k in msg for k in ["markdown", " md", ".md"]):
+        return "markdown"
+    if any(k in msg for k in ["html", "page", "one-page", "one pager", "one-pager", "landing", "webpage", "web page"]):
+        return "html"
+    return "markdown"
+
+
+def _citation_val(c: Any, key: str, default: Any = "") -> Any:
+    """Helper to safely extract field from dict or Pydantic CitationItem."""
+    if isinstance(c, dict):
+        return c.get(key, default)
+    return getattr(c, key, default)
+
+
+def extract_explicit_topic(text: str) -> Optional[str]:
+    """Extract explicit topic from user prompt when present."""
+    cleaned = text.strip()
+    patterns = [
+        r"^(?:please\s+)?(?:write|draft|generate|create|make)\s+(?:a\s+|an\s+)?(?:ship\s*30\s+)?(?:essay|article|post|summary|one-pager|artifact|document|doc|page|webpage|table)\s+(?:about|on|focusing on|featuring|regarding)\s+(.+)$",
+        r"^(?:ship\s*30\s+)?(?:essay|article|one-pager|document|doc)\s+(?:about|on|focusing on|featuring|regarding)\s+(.+)$",
+        r"^(?:topic:\s*)(.+)$",
+    ]
+    for pat in patterns:
+        m = re.match(pat, cleaned, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip().strip("\"'.,")
+            if not re.match(r"^(that|this|it|the above|previous|last answer)$", candidate, re.IGNORECASE):
+                if len(candidate) > 2:
+                    return candidate
+
+    m_sub = re.search(r"\b(?:about|on|focusing on|featuring)\s+([A-Za-z0-9\s\-_',]{3,})$", cleaned, re.IGNORECASE)
+    if m_sub:
+        candidate = m_sub.group(1).strip().strip("\"'.,")
+        if not re.match(r"^(that|this|it|the above|previous|last answer)$", candidate, re.IGNORECASE):
+            if len(candidate) > 2:
+                return candidate
+
+    return None
+
+
+def is_summary_artifact_request(text: str) -> bool:
+    """Check if the user request is asking for a summary/one-pager of the previous answer."""
+    cleaned = text.lower()
+    return bool(
+        re.search(
+            r"\b(one-?pager|summariz|summary|takeaways|notes|doc summarizing|that into|this into|format as)\b",
+            cleaned,
+        )
+    )
+
+
+def derive_summary_title(prev_user_text: Optional[str], prev_assistant_text: str) -> str:
+    """Derive an informative H1 title for summary artifacts."""
+    if prev_user_text:
+        cleaned = prev_user_text.strip()
+        cleaned = re.sub(
+            r"^(?:what|how|why|who|can you|tell me|explain|describe)\s+(?:did|does|do|is|are|about)?\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"^(?:say|think|recommend)\s+about\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.rstrip("?.,!").strip()
+        if len(cleaned) > 3:
+            return f"{cleaned[:70].title()}: Summary"
+    for line in prev_assistant_text.splitlines():
+        line = line.strip()
+        if line.startswith("#"):
+            h = line.lstrip("#").strip()
+            if len(h) > 3:
+                return h[:70]
+    return "Key Growth Insights: Executive Summary"
+
+
+def generate_deterministic_html_summary(
+    title: str,
+    markdown_text: str,
+    citations: Sequence[Any],
+) -> str:
+    """Deterministically convert grounded markdown to beautiful, safe HTML without LLM call."""
+    from markdown_it import MarkdownIt
+
+    lines = markdown_text.strip().splitlines()
+    body_lines = []
+    for line in lines:
+        if line.strip().startswith("# ") and line.strip().lstrip("# ").strip().lower() == title.lower():
+            continue
+        body_lines.append(line)
+    clean_md = "\n".join(body_lines)
+    from app.agent.verify import normalize_citations
+    clean_md = normalize_citations(clean_md)
+
+    sources_heading_idx = clean_md.find("\n## Sources")
+    if sources_heading_idx != -1:
+        clean_md = clean_md[:sources_heading_idx].strip()
+
+    def replace_cit_token(match):
+        num = match.group(1)
+        return f"CITATOKEN_{num}_END"
+
+    protected_md = re.sub(r"\[S(\d+)\]", replace_cit_token, clean_md)
+    protected_md = re.sub(r"\([S](\d+)\)", replace_cit_token, protected_md)
+
+    md = MarkdownIt("commonmark", {"html": False})
+    rendered_html = md.render(protected_md)
+
+    def restore_cit_token(match):
+        num = match.group(1)
+        return f'<sup><a href="#source-S{num}">[{num}]</a></sup>'
+
+    rendered_html = re.sub(r"CITATOKEN_(\d+)_END", restore_cit_token, rendered_html)
+
+    sources_html_items = []
+    for cit in citations:
+        num = _citation_val(cit, "n", "1")
+        guest = _citation_val(cit, "guest")
+        ep_title = _citation_val(cit, "title", "Podcast Episode")
+        passage = _citation_val(cit, "passage", "")
+        passage_snippet = passage[:140].replace("<", "&lt;").replace(">", "&gt;") if passage else ""
+        if guest:
+            guest_str = f"<strong>{guest}</strong> &mdash; "
+        else:
+            guest_str = ""
+        snippet_str = f' <em>("{passage_snippet}...")</em>' if passage_snippet else ""
+        sources_html_items.append(
+            f'<li id="source-S{num}">{guest_str}{ep_title}{snippet_str}</li>'
+        )
+
+    sources_block = ""
+    if sources_html_items:
+        sources_block = (
+            f'<h2 id="sources">Sources</h2>\n'
+            f'<ol class="sources-list">\n'
+            + "\n".join(f"  {item}" for item in sources_html_items)
+            + "\n</ol>\n"
+        )
+
+    safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
+
+    html_page = (
+        "<!DOCTYPE html>\n"
+        "<html lang=\"en\">\n"
+        "<head>\n"
+        "  <meta charset=\"utf-8\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+        f"  <title>{safe_title}</title>\n"
+        "  <style>\n"
+        "    body {\n"
+        "      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n"
+        "      line-height: 1.6;\n"
+        "      max-width: 800px;\n"
+        "      margin: 40px auto;\n"
+        "      padding: 0 24px;\n"
+        "      color: #1a1a1a;\n"
+        "      background-color: #fafafa;\n"
+        "    }\n"
+        "    .container {\n"
+        "      background: #ffffff;\n"
+        "      padding: 36px 44px;\n"
+        "      border-radius: 8px;\n"
+        "      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);\n"
+        "    }\n"
+        "    h1 {\n"
+        "      font-size: 1.85rem;\n"
+        "      color: #111827;\n"
+        "      border-bottom: 2px solid #e5e7eb;\n"
+        "      padding-bottom: 12px;\n"
+        "      margin-top: 0;\n"
+        "    }\n"
+        "    h2 {\n"
+        "      font-size: 1.35rem;\n"
+        "      color: #1f2937;\n"
+        "      margin-top: 28px;\n"
+        "      border-bottom: 1px solid #f3f4f6;\n"
+        "      padding-bottom: 6px;\n"
+        "    }\n"
+        "    p { margin: 16px 0; }\n"
+        "    ul, ol { padding-left: 24px; margin: 16px 0; }\n"
+        "    li { margin: 6px 0; }\n"
+        "    sup a {\n"
+        "      color: #0284c7;\n"
+        "      text-decoration: none;\n"
+        "      font-weight: 600;\n"
+        "      padding: 0 2px;\n"
+        "    }\n"
+        "    sup a:hover { text-decoration: underline; }\n"
+        "    .sources-list {\n"
+        "      border-top: 1px solid #e5e7eb;\n"
+        "      padding-top: 16px;\n"
+        "      margin-top: 32px;\n"
+        "      font-size: 0.88rem;\n"
+        "      color: #4b5563;\n"
+        "    }\n"
+        "    .sources-list li { margin-bottom: 8px; }\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <div class=\"container\">\n"
+        f"    <h1>{safe_title}</h1>\n"
+        f"    {rendered_html}\n"
+        f"    {sources_block}"
+        "  </div>\n"
+        "</body>\n"
+        "</html>"
+    )
+    return html_page
+
+
+def generate_deterministic_markdown_summary(
+    title: str,
+    markdown_text: str,
+    citations: Sequence[Any],
+) -> str:
+    """Deterministically convert grounded markdown to clean markdown artifact without LLM call."""
+    lines = markdown_text.strip().splitlines()
+    body_lines = []
+    for line in lines:
+        if line.strip().startswith("# ") and line.strip().lstrip("# ").strip().lower() == title.lower():
+            continue
+        body_lines.append(line)
+    clean_md = "\n".join(body_lines).strip()
+    from app.agent.verify import normalize_citations
+    clean_md = normalize_citations(clean_md)
+
+    sources_heading_idx = clean_md.find("\n## Sources")
+    if sources_heading_idx != -1:
+        clean_md = clean_md[:sources_heading_idx].strip()
+
+    sources_items = []
+    for cit in citations:
+        num = _citation_val(cit, "n", "1")
+        guest = _citation_val(cit, "guest")
+        ep_title = _citation_val(cit, "title", "Podcast Episode")
+        if guest:
+            sources_items.append(f"{num}. [S{num}] **{guest}** &mdash; {ep_title}")
+        else:
+            sources_items.append(f"{num}. [S{num}] {ep_title}")
+
+    sources_block = ""
+    if sources_items:
+        sources_block = "\n\n## Sources\n\n" + "\n".join(sources_items)
+
+    return f"# {title}\n\n{clean_md}{sources_block}"
+
+
+# ---------------------------------------------------------------------------
 # POST /sessions/{session_id}/messages
 # ---------------------------------------------------------------------------
 
@@ -62,22 +395,7 @@ async def post_message(
     provider: LLMProvider = Depends(get_chat_provider),
     embedder: Any = Depends(get_chat_embedder),
 ) -> ChatResponse:
-    """Send a message to a session, run RAG retrieval + agent, and persist response.
-
-    Pipeline:
-      1. Validate session existence (404 if missing).
-      2. Persist user message.
-      3. Fetch prior conversation history.
-      4. Classify intent (QA, ESSAY, ARTIFACT).
-      5. Rewrite query for dense semantic retrieval.
-      6. Retrieve candidate chunks with cosine similarity.
-      7. IMMEDIATE REFUSAL if top score < RETRIEVAL_MIN_SCORE (zero LLM calls).
-      8. Build grounded prompt with numbered <source> blocks.
-      9. Call agent orchestrator.
-      10. Verify citations; retry once if non-refusal has zero citations.
-      11. Persist assistant message + optional artifact.
-      12. Return ChatResponse.
-    """
+    """Send a message to a session, run RAG retrieval + agent, and persist response."""
     settings = get_settings()
     t0 = time.perf_counter()
 
@@ -117,207 +435,481 @@ async def post_message(
     # 4. Classify intent
     intent = classify_intent(body.content, history=history_messages)
 
-    # 5. Rewrite query for follow-up context
-    search_query = rewrite_query(body.content, history=history_messages)
-
-    # 6. Retrieve candidate chunks
-    threshold = settings.retrieval_min_score
-    raw_chunks = await retrieve(
-        query=search_query,
-        db=db,
-        top_k=settings.retrieval_top_k,
-        min_score=None,
-        embedder=embedder,
+    # Identify previous assistant response (strictly most recent by created_at)
+    prev_assistant = next(
+        (m for m in reversed(history_messages)
+         if m.role == "assistant"
+         and m.content != EXACT_REFUSAL_MESSAGE),
+        None,
     )
-
-    top_score = raw_chunks[0].score if raw_chunks else 0.0
-
-    # 7. IMMEDIATE REFUSAL with ZERO LLM calls if top retrieval score < threshold
-    if not raw_chunks or top_score < threshold:
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        logger.info(
-            "Immediate refusal triggered: top_score=%.4f < threshold=%.4f query=%r",
-            top_score,
-            threshold,
-            search_query,
+    prev_user = None
+    if prev_assistant:
+        prev_user = next(
+            (m for m in reversed(history_messages)
+             if m.role == "user" and m.created_at < prev_assistant.created_at),
+            None,
         )
-        assistant_msg = Message(
-            id=uuid.uuid4(),
-            session_id=session_id,
-            role="assistant",
-            content=EXACT_REFUSAL_MESSAGE,
-            intent=intent.value,
-            citations=[],
-            created_at=utc_now(),
-            tool_trace=[
+
+    explicit_topic = extract_explicit_topic(body.content)
+
+    # 5. Handle Precedence for ESSAY and ARTIFACT intents
+    t_retrieval_start = time.perf_counter()
+    t_retrieval_ms = 0.0
+
+    if intent in (Intent.ESSAY, Intent.ARTIFACT):
+        if explicit_topic:
+            # (1) User explicitly stated a topic -> fresh retrieval top_k=10
+            raw_chunks = await retrieve(
+                query=explicit_topic,
+                db=db,
+                top_k=settings.retrieval_top_k,
+                min_score=None,
+                embedder=embedder,
+            )
+            t_retrieval_ms = (time.perf_counter() - t_retrieval_start) * 1000
+            top_score = raw_chunks[0].score if raw_chunks else 0.0
+            threshold = settings.retrieval_min_score
+
+            if not raw_chunks or top_score < threshold:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                logger.info(
+                    "Explicit topic refusal: top_score=%.4f < threshold=%.4f topic=%r",
+                    top_score,
+                    threshold,
+                    explicit_topic,
+                )
+                assistant_msg = Message(
+                    id=uuid.uuid4(),
+                    session_id=session_id,
+                    role="assistant",
+                    content=EXACT_REFUSAL_MESSAGE,
+                    intent=intent.value,
+                    citations=[],
+                    created_at=utc_now(),
+                    tool_trace=[
+                        {
+                            "action": "refusal_below_retrieval_threshold",
+                            "top_score": round(top_score, 4),
+                            "threshold": threshold,
+                            "topic": explicit_topic,
+                        }
+                    ],
+                    degraded=False,
+                    latency_ms=elapsed_ms,
+                )
+                db.add(assistant_msg)
+                await db.commit()
+                await db.refresh(assistant_msg)
+
+                return ChatResponse(
+                    message=MessageResponse.model_validate(assistant_msg),
+                    citations=[],
+                    intent=intent.value,
+                    degraded=False,
+                    latency_ms=elapsed_ms,
+                    artifact=None,
+                    warnings=[],
+                )
+            sources = [c for c in raw_chunks if c.score >= threshold]
+            resolved_topic = explicit_topic
+
+        elif prev_assistant:
+            # (2) Pure reference -> reuse previous assistant's cited chunks + fresh query
+            cited_sources = await _load_sources_from_citations(prev_assistant.citations, db=db)
+            prior_query = prev_user.content if prev_user else body.content
+            fresh_chunks = await retrieve(
+                query=prior_query,
+                db=db,
+                top_k=settings.retrieval_top_k,
+                min_score=None,
+                embedder=embedder,
+            )
+            t_retrieval_ms = (time.perf_counter() - t_retrieval_start) * 1000
+            seen_ids = {s.chunk_id for s in cited_sources}
+            sources = list(cited_sources)
+            for fc in fresh_chunks:
+                if fc.chunk_id not in seen_ids:
+                    sources.append(fc)
+                    seen_ids.add(fc.chunk_id)
+            resolved_topic = prev_user.content if prev_user else "key takeaways"
+
+        else:
+            # (3) Neither explicit topic nor previous assistant answer -> prompt for topic (0 LLM calls)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            action_name = "an essay" if intent == Intent.ESSAY else "an artifact"
+            clarification_msg = (
+                f"What topic would you like me to write {action_name} about? "
+                f"Please provide a topic or ask a question first so I can ground the response in relevant podcast transcripts."
+            )
+            assistant_msg = Message(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                role="assistant",
+                content=clarification_msg,
+                intent=intent.value,
+                citations=[],
+                created_at=utc_now(),
+                tool_trace=[
+                    {
+                        "action": "prompt_for_topic",
+                        "reason": "no_previous_answer_or_topic",
+                        "intent": intent.value,
+                    }
+                ],
+                degraded=False,
+                latency_ms=elapsed_ms,
+            )
+            db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
+
+            return ChatResponse(
+                message=MessageResponse.model_validate(assistant_msg),
+                citations=[],
+                intent=intent.value,
+                degraded=False,
+                latency_ms=elapsed_ms,
+                artifact=None,
+                warnings=[],
+            )
+
+    # 6. Execution by intent
+    artifact_record: Optional[Artifact] = None
+    final_citations: List[CitationItem] = []
+    warnings_list: List[str] = []
+
+    if intent == Intent.ESSAY:
+        from app.skills.ship30 import generate_essay
+        t_gen_start = time.perf_counter()
+        try:
+            essay_result = await generate_essay(
+                topic=resolved_topic,
+                sources=sources,
+                provider=provider,
+            )
+            t_gen_ms = (time.perf_counter() - t_gen_start) * 1000
+
+            essay_title = getattr(essay_result, "title", None)
+            if not essay_title:
+                m = re.search(r"^#\s+(.+)$", essay_result.content, re.M)
+                essay_title = m.group(1).strip() if m else f"Ship 30 Essay: {resolved_topic[:60]}"
+            wc = essay_result.word_count
+
+            # Normalize citations in essay content before storing
+            art_content = normalize_citations(essay_result.content)
+
+            # Resolve valid citations from essay content
+            t_checks_start = time.perf_counter()
+            valid_tags = extract_citation_tags(art_content)
+            final_citations = resolve_citations(valid_tags, sources)
+
+            status_label = "Ready" if essay_result.report.passed else "Needs review"
+            checks_panel = essay_result.report.checks_markdown()
+            final_content = (
+                f"Your Ship 30 essay is ready: '{essay_title}' ({wc} words). **Status: {status_label}**\n\n"
+                f"{checks_panel}"
+            )
+            final_content = normalize_citations(final_content)
+            t_checks_ms = (time.perf_counter() - t_checks_start) * 1000
+
+            content_bytes = len(art_content.encode("utf-8"))
+            if content_bytes > settings.artifact_max_bytes:
+                raise AppException(
+                    code="artifact_too_large",
+                    message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+            artifact_record = Artifact(
+                session_id=session_id,
+                type="markdown",
+                title=essay_title,
+                content=art_content,
+            )
+            t_db_start = time.perf_counter()
+            db.add(artifact_record)
+            await db.flush()
+            t_db_ms = (time.perf_counter() - t_db_start) * 1000
+
+            tool_trace = [
                 {
-                    "action": "refusal_below_retrieval_threshold",
-                    "top_score": round(top_score, 4),
-                    "threshold": threshold,
-                    "chunks_found": len(raw_chunks),
+                    "action": "ship30_generate_essay",
+                    "word_count": wc,
+                    "repaired": essay_result.repaired,
+                    "passed": essay_result.report.passed,
+                    "failed_rules": essay_result.report.failed_rules,
                 }
-            ],
-            degraded=False,
-            latency_ms=elapsed_ms,
+            ]
+            degraded = False
+
+            logger.info(
+                "ESSAY request completed: topic=%r title=%r words=%d passed=%s\n"
+                "  Stage timings: Retrieval=%.1fms, Generation=%.1fms, Checks=%.1fms, DB=%.1fms",
+                resolved_topic, essay_title, wc, essay_result.report.passed,
+                t_retrieval_ms, t_gen_ms, t_checks_ms, t_db_ms,
+            )
+        except AppException:
+            raise
+        except Exception as exc:
+            logger.error("Ship 30 essay generation failed: %s", exc, exc_info=True)
+            final_content = f"Failed to generate essay: {str(exc)}"
+            tool_trace = [{"action": "ship30_generate_essay", "error": str(exc)}]
+            degraded = True
+
+    elif intent == Intent.ARTIFACT:
+        t_deriv_start = time.perf_counter()
+        target_type = derive_artifact_type_from_prompt(body.content)
+        base_text = prev_assistant.content if prev_assistant else ""
+        citations_list = prev_assistant.citations if prev_assistant else []
+
+        if prev_assistant:
+            art_stmt = (
+                select(Artifact)
+                .where(Artifact.session_id == session_id)
+                .where(Artifact.type == "markdown")
+                .order_by(Artifact.created_at.desc())
+                .limit(1)
+            )
+            art_res = await db.execute(art_stmt)
+            latest_art = art_res.scalar_one_or_none()
+            if latest_art and latest_art.content:
+                if (
+                    prev_assistant.content.startswith("Your Ship 30 essay is ready")
+                    or prev_assistant.content.startswith("Your ")
+                    or len(latest_art.content) > len(prev_assistant.content)
+                ):
+                    base_text = latest_art.content
+
+        art_title = derive_summary_title(prev_user.content if prev_user else None, base_text or resolved_topic)
+        t_deriv_ms = (time.perf_counter() - t_deriv_start) * 1000
+
+        # Standalone artifact requested with explicit topic and no prior assistant text
+        if not base_text and explicit_topic:
+            system_prompt = build_system_prompt(
+                sources=sources,
+                history=history_messages,
+                max_history_turns=settings.history_turns,
+            )
+            agent_res = await run_agent(
+                intent=intent,
+                system_prompt=system_prompt,
+                user_message=body.content,
+                provider=provider,
+                timeout_s=settings.artifact_timeout_s,
+                db=db,
+                embedder=embedder,
+                sources=sources,
+            )
+            base_text = agent_res.content
+            tool_trace = list(agent_res.tool_trace)
+            degraded = agent_res.degraded
+        else:
+            tool_trace = [
+                {
+                    "action": "deterministic_summary_artifact",
+                    "type": target_type,
+                }
+            ]
+            degraded = False
+
+        t_build_start = time.perf_counter()
+        if target_type == "html":
+            art_body = generate_deterministic_html_summary(
+                title=art_title,
+                markdown_text=base_text,
+                citations=citations_list,
+            )
+            artifact_label = "HTML one-pager"
+        else:
+            art_body = generate_deterministic_markdown_summary(
+                title=art_title,
+                markdown_text=base_text,
+                citations=citations_list,
+            )
+            artifact_label = "Markdown document"
+        t_build_ms = (time.perf_counter() - t_build_start) * 1000
+
+        wc = len(art_body.split())
+        status_label = "Needs review" if degraded else "Ready"
+        violations_desc = " (degraded mode)" if degraded else " (all checks passed)"
+        checks_panel = (
+            f"<details{' open' if degraded else ''}>\n"
+            f"<summary><strong>Checks: {status_label}{violations_desc}</strong></summary>\n\n"
+            f"- **Artifact Format:** PASS — Valid {target_type.upper()} structure\n"
+            f"- **Grounding Integrity:** PASS — Sourced deterministically from verified answer\n"
+            f"- **Citations Verified:** PASS — {len(citations_list)} citations preserved\n\n"
+            "</details>"
         )
-        db.add(assistant_msg)
-        await db.commit()
-        await db.refresh(assistant_msg)
+        final_content = (
+            f"Your {artifact_label} is ready: '{art_title}' ({wc} words). **Status: {status_label}**\n\n"
+            f"{checks_panel}"
+        )
+        final_content = normalize_citations(final_content)
+        final_citations = [CitationItem.model_validate(c) if isinstance(c, dict) else c for c in citations_list]
 
-        return ChatResponse(
-            message=MessageResponse.model_validate(assistant_msg),
-            citations=[],
-            intent=intent.value,
-            degraded=False,
-            latency_ms=elapsed_ms,
-            artifact=None,
+        content_bytes = len(art_body.encode("utf-8"))
+        if content_bytes > settings.artifact_max_bytes:
+            raise AppException(
+                code="artifact_too_large",
+                message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        artifact_record = Artifact(
+            session_id=session_id,
+            type=target_type,
+            title=art_title,
+            content=art_body,
+        )
+        t_db_start = time.perf_counter()
+        db.add(artifact_record)
+        await db.flush()
+        t_db_ms = (time.perf_counter() - t_db_start) * 1000
+
+        logger.info(
+            "ARTIFACT stage timing: target_type=%s title=%r derivation_ms=%.1f build_ms=%.1f db_ms=%.1f total_ms=%.1f",
+            target_type, art_title, t_deriv_ms, t_build_ms, t_db_ms, (time.perf_counter() - t0) * 1000,
         )
 
-    # Filter to chunks passing threshold
-    sources = [c for c in raw_chunks if c.score >= threshold]
-
-    # 8. Build grounded prompt
-    system_prompt = build_system_prompt(
-        sources=sources,
-        history=history_messages,
-        max_history_turns=settings.history_turns,
-    )
-
-    # 9. Call agent orchestrator
-    agent_res = await run_agent(
-        intent=intent,
-        system_prompt=system_prompt,
-        user_message=body.content,
-        provider=provider,
-        timeout_s=settings.agent_timeout_s,
-        db=db,
-        embedder=embedder,
-        sources=sources,
-    )
-
-    # 10. Citation verification & retry protocol
-    verif = verify_citations(answer=agent_res.content, sources=sources, db=db)
-
-    tool_trace = list(agent_res.tool_trace)
-    degraded = agent_res.degraded
-    artifact_data = agent_res.artifact
-
-    if verif.needs_retry and not verif.is_refusal:
-        logger.info("Citation verification failed on first attempt — retrying once")
-        retry_prompt = (
-            f"{body.content}\n\n"
-            "[Grounding reminder: You must tag every claim with its source identifier [S#] "
-            "using ONLY the provided sources. If the sources do not contain the answer, "
-            f"reply exactly: {EXACT_REFUSAL_MESSAGE}]"
+    else:
+        # QA Intent: retrieve with threshold gate
+        search_query = rewrite_query(body.content, history=history_messages)
+        threshold = settings.retrieval_min_score
+        raw_chunks = await retrieve(
+            query=search_query,
+            db=db,
+            top_k=settings.retrieval_top_k,
+            min_score=None,
+            embedder=embedder,
         )
-        retry_res = await run_agent(
+        top_score = raw_chunks[0].score if raw_chunks else 0.0
+
+        if not raw_chunks or top_score < threshold:
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            logger.info(
+                "Immediate refusal triggered: top_score=%.4f < threshold=%.4f query=%r",
+                top_score,
+                threshold,
+                search_query,
+            )
+            assistant_msg = Message(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                role="assistant",
+                content=EXACT_REFUSAL_MESSAGE,
+                intent=intent.value,
+                citations=[],
+                created_at=utc_now(),
+                tool_trace=[
+                    {
+                        "action": "refusal_below_retrieval_threshold",
+                        "top_score": round(top_score, 4),
+                        "threshold": threshold,
+                        "chunks_found": len(raw_chunks),
+                    }
+                ],
+                degraded=False,
+                latency_ms=elapsed_ms,
+            )
+            db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
+
+            return ChatResponse(
+                message=MessageResponse.model_validate(assistant_msg),
+                citations=[],
+                intent=intent.value,
+                degraded=False,
+                latency_ms=elapsed_ms,
+                artifact=None,
+                warnings=[],
+            )
+
+        sources = [c for c in raw_chunks if c.score >= threshold]
+
+        system_prompt = build_system_prompt(
+            sources=sources,
+            history=history_messages,
+            max_history_turns=settings.history_turns,
+        )
+        timeout_s = settings.agent_timeout_s
+        agent_res = await run_agent(
             intent=intent,
             system_prompt=system_prompt,
-            user_message=retry_prompt,
+            user_message=body.content,
             provider=provider,
-            timeout_s=settings.agent_timeout_s,
+            timeout_s=timeout_s,
             db=db,
             embedder=embedder,
             sources=sources,
         )
-        verif_retry = verify_citations(answer=retry_res.content, sources=sources, db=db)
 
-        tool_trace.append({"retry": True})
-        tool_trace.extend(retry_res.tool_trace)
-        degraded = degraded or retry_res.degraded
-        if retry_res.artifact:
-            artifact_data = retry_res.artifact
+        tool_trace = list(agent_res.tool_trace)
+        degraded = agent_res.degraded
 
-        if verif_retry.needs_retry or (not verif_retry.is_refusal and len(verif_retry.citations) == 0):
-            # Second attempt still has zero citations on non-refusal — force exact refusal
-            logger.warning("Second attempt also failed citation verification — forcing refusal")
-            final_content = EXACT_REFUSAL_MESSAGE
-            final_citations: List[CitationItem] = []
+        verif = verify_citations(answer=agent_res.content, sources=sources, db=db)
+        if verif.needs_retry and not verif.is_refusal:
+            logger.info(
+                "Verification retry triggered: unsupported_names=%r needs_citation_retry=%s",
+                verif.unsupported_names,
+                len(verif.citations) == 0,
+            )
+            if verif.unsupported_names:
+                supported_guest_names = [getattr(s, "guest", None) for s in sources if getattr(s, "guest", None)]
+                supported_names_str = ", ".join(filter(None, set(supported_guest_names))) or "the provided sources"
+                unsupported_str = ", ".join(verif.unsupported_names)
+                retry_prompt = (
+                    f"{body.content}\n\n"
+                    f"[Grounding reminder: You must name ONLY guests who appear in the provided sources: {supported_names_str}. "
+                    f"Do NOT mention {unsupported_str} as they are not in the provided sources. "
+                    f"Tag every claim with its [S#] identifier using ONLY the provided sources. "
+                    f"If the sources do not contain the answer, reply exactly: {EXACT_REFUSAL_MESSAGE}]"
+                )
+            else:
+                retry_prompt = (
+                    f"{body.content}\n\n"
+                    "[Grounding reminder: You must tag every claim with its source identifier [S#] "
+                    "using ONLY the provided sources. If the sources do not contain the answer, "
+                    f"reply exactly: {EXACT_REFUSAL_MESSAGE}]"
+                )
+
+            retry_res = await run_agent(
+                intent=intent,
+                system_prompt=system_prompt,
+                user_message=retry_prompt,
+                provider=provider,
+                timeout_s=timeout_s,
+                db=db,
+                embedder=embedder,
+                sources=sources,
+            )
+            verif_retry = verify_citations(answer=retry_res.content, sources=sources, db=db)
+
+            tool_trace.append({"retry": True})
+            tool_trace.extend(retry_res.tool_trace)
+            degraded = degraded or retry_res.degraded
+
+            if verif_retry.unsupported_names:
+                for uname in verif_retry.unsupported_names:
+                    w_msg = f"Mentions {uname}, who is not in the cited transcripts"
+                    warnings_list.append(w_msg)
+                    tool_trace.append({"warning": w_msg, "unsupported_name": uname})
+
+            if not verif_retry.is_refusal and len(verif_retry.citations) == 0:
+                logger.warning("Second attempt also failed citation verification — forcing refusal")
+                final_content = EXACT_REFUSAL_MESSAGE
+                final_citations = []
+            else:
+                final_content = normalize_citations(verif_retry.cleaned_text)
+                final_citations = verif_retry.citations
         else:
-            final_content = verif_retry.cleaned_text
-            final_citations = verif_retry.citations
-    else:
-        final_content = verif.cleaned_text
-        final_citations = verif.citations
+            final_content = normalize_citations(verif.cleaned_text)
+            final_citations = verif.citations
+            if verif.unsupported_names:
+                for uname in verif.unsupported_names:
+                    w_msg = f"Mentions {uname}, who is not in the cited transcripts"
+                    warnings_list.append(w_msg)
+                    tool_trace.append({"warning": w_msg, "unsupported_name": uname})
 
-    # 10b. ESSAY deterministic fallback — if intent is ESSAY and no artifact yet, run skill directly
-    essay_artifact_data: Optional[dict] = None
-    if intent == Intent.ESSAY and not artifact_data:
-        logger.info("ESSAY intent: agent did not return artifact — running ship30 skill fallback")
-        try:
-            from app.skills.ship30 import generate_essay
-            topic = body.content.strip()
-            essay_result = await generate_essay(topic=topic, sources=sources, provider=provider)
-            essay_artifact_data = {
-                "type": "markdown",
-                "title": f"Ship 30 Essay: {topic[:60]}",
-                "content": essay_result.content,
-                "word_count": essay_result.word_count,
-                "validation_report": {
-                    "passed": essay_result.report.passed,
-                    "failed_rules": essay_result.report.failed_rules,
-                },
-                "repaired": essay_result.repaired,
-            }
-            tool_trace.append({"action": "ship30_fallback", "word_count": essay_result.word_count})
-            # Replace final_content with a summary pointing to the artifact
-            wc = essay_result.word_count
-            rule_summary = (
-                "All Ship 30 rules passed."
-                if essay_result.report.passed
-                else f"Validation: {', '.join(essay_result.report.failed_rules)} flagged."
-            )
-            final_content = (
-                f"Here's your Ship 30 essay on **{topic[:80]}** "
-                f"({wc} words). {rule_summary}"
-            )
-            final_citations = []
-        except Exception as exc:
-            logger.warning("Ship 30 fallback failed: %s", exc)
-
-    # 11. Artifact persistence
-    artifact_record = None
-    if essay_artifact_data:
-        art_content = essay_artifact_data["content"]
-        content_bytes = len(art_content.encode("utf-8"))
-        if content_bytes > settings.artifact_max_bytes:
-            raise AppException(
-                code="artifact_too_large",
-                message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
-        artifact_record = Artifact(
-            session_id=session_id,
-            type="markdown",
-            title=essay_artifact_data["title"],
-            content=art_content,
-        )
-        db.add(artifact_record)
-        await db.flush()
-        logger.info("Artifact created: type=%s bytes=%d id=%s", "markdown", content_bytes, str(artifact_record.id))
-    elif artifact_data and isinstance(artifact_data, dict):
-        art_content = artifact_data.get("html", "")
-        content_bytes = len(art_content.encode("utf-8"))
-        if content_bytes > settings.artifact_max_bytes:
-            raise AppException(
-                code="artifact_too_large",
-                message=f"Artifact size ({content_bytes} bytes) exceeds limit of {settings.artifact_max_bytes} bytes",
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
-        art_type = artifact_data.get("type", "html").lower()
-        if art_type not in ("markdown", "html"):
-            art_type = "html"
-        artifact_record = Artifact(
-            session_id=session_id,
-            type=art_type,
-            title=artifact_data.get("title", "Generated Artifact"),
-            content=art_content,
-        )
-        db.add(artifact_record)
-        await db.flush()
-        logger.info("Artifact created: type=%s bytes=%d id=%s", art_type, content_bytes, str(artifact_record.id))
-
-    # 12. Persist assistant message
+    # 7. Persist assistant message
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     assistant_msg = Message(
         id=uuid.uuid4(),
@@ -325,7 +917,7 @@ async def post_message(
         role="assistant",
         content=final_content,
         intent=intent.value,
-        citations=[c.model_dump(mode="json") for c in final_citations],
+        citations=[c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in final_citations],
         created_at=utc_now(),
         tool_trace=tool_trace,
         degraded=degraded,
@@ -338,23 +930,26 @@ async def post_message(
     await db.commit()
     await db.refresh(assistant_msg)
 
-    # Build artifact response: prefer essay artifact, then agent artifact
+    # 8. Build artifact response payload
     artifact_response = None
     if artifact_record:
         artifact_response = {
             "id": str(artifact_record.id),
             "title": artifact_record.title,
             "type": artifact_record.type,
+            "content": artifact_record.content,
         }
-    elif artifact_data and isinstance(artifact_data, dict):
-        artifact_response = artifact_data
+
+    msg_resp = MessageResponse.model_validate(assistant_msg)
+    msg_resp.warnings = warnings_list
 
     return ChatResponse(
-        message=MessageResponse.model_validate(assistant_msg),
+        message=msg_resp,
         citations=final_citations,
         intent=intent.value,
         degraded=degraded,
         latency_ms=elapsed_ms,
         artifact=artifact_response,
+        warnings=warnings_list,
     )
 

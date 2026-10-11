@@ -119,15 +119,13 @@ def test_intent_tools_qa_only_search():
 def test_intent_tools_essay_includes_ship30():
     from app.agent.tools import INTENT_TOOLS
 
-    assert "generate_ship30_essay" in INTENT_TOOLS["ESSAY"]
-    assert "search_transcripts" in INTENT_TOOLS["ESSAY"]
+    assert INTENT_TOOLS["ESSAY"] == ["generate_ship30_essay"]
 
 
 def test_intent_tools_artifact_includes_create():
     from app.agent.tools import INTENT_TOOLS
 
-    assert "create_artifact" in INTENT_TOOLS["ARTIFACT"]
-    assert "search_transcripts" in INTENT_TOOLS["ARTIFACT"]
+    assert INTENT_TOOLS["ARTIFACT"] == ["create_artifact"]
 
 
 def test_intent_tools_qa_does_not_include_artifact_tools():

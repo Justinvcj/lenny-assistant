@@ -178,10 +178,42 @@ def test_rewrite_query_multi_turn_order():
     assert rewrite_query("Tell me more about that", history=history) == "How do you measure net revenue retention? Tell me more about that"
 
 
-def test_is_standalone_query_logic():
-    """Verify standalone query classification rules."""
+import pytest
+
+
+@pytest.mark.parametrize("query,expected_standalone,desc", [
+    # Positive follow-up/reference cases (must return False)
+    ("Turn that into a Ship 30 essay", False, "reference: turn that into"),
+    ("Make that a one-page HTML summary", False, "reference: make that a"),
+    ("Summarize that in three key bullet points", False, "reference: summarize that"),
+    ("Based on the above, what should an early stage founder do first?", False, "reference: based on the above"),
+    ("Does this answer apply to B2B enterprise software?", False, "reference: this answer"),
+    ("Can you expand on the previous answer with more concrete metrics?", False, "reference: the previous answer"),
+    ("Tell me more about what you just said regarding retention", False, "reference: what you just said"),
+    ("Make that into a checklist for our product managers", False, "reference: make that into"),
+    ("Convert this into an executive summary for leadership", False, "reference: convert this into"),
+    ("Rewrite that with a focus on freemium conversion", False, "reference: rewrite that"),
+    ("From the above, what is the single biggest growth driver?", False, "reference: from the above"),
+    ("What about B2B?", False, "short elliptical follow-up"),
+    ("Why?", False, "single word follow-up"),
+    ("Who said that?", False, "pronoun follow-up"),
+    ("What else did they recommend?", False, "pronoun follow-up"),
+    # Negative cases (standalone queries, must return True)
+    ("How should early-stage B2B startups approach pricing and monetization?", True, "standalone pricing query"),
+    ("What does Brian Chesky say about founder mode and leadership style?", True, "standalone founder mode query"),
+    ("Explain the difference between retention and engagement in consumer apps.", True, "standalone metric definition"),
+    ("Who were the guests discussing growth loops and viral acquisition?", True, "standalone guest lookup"),
+    ("Why do two-sided marketplaces struggle with the chicken-and-egg problem?", True, "standalone marketplace dynamics"),
+    ("How did Superhuman design their onboarding experience to achieve product-market fit?", True, "standalone onboarding query"),
+    ("What metrics should a seed-stage SaaS company track for cohort retention?", True, "standalone SaaS metrics"),
+    ("What is the difference between sales-led and product-led growth?", True, "standalone PLG vs SLG query"),
+])
+def test_is_standalone_query_phrasings(query: str, expected_standalone: bool, desc: str):
+    """Verify is_standalone_query accurately identifies follow-up references and standalone queries."""
+    result = is_standalone_query(query)
+    assert result is expected_standalone, f"Failed on {desc}: query='{query}' expected={expected_standalone}, got={result}"
+
+
+def test_is_standalone_query_empty():
+    """Verify empty string is treated as standalone to prevent infinite loops."""
     assert is_standalone_query("") is True
-    assert is_standalone_query("Why?") is False
-    assert is_standalone_query("What about B2B?") is False
-    assert is_standalone_query("Who said that?") is False
-    assert is_standalone_query("How should startups price their products?") is True

@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 
+from app.config import get_settings
 from app.models import Chunk, Document
 from app.rag.chunking import chunk_document
 from app.rag.embeddings import (
@@ -128,21 +129,29 @@ async def test_retrieve_huge_query_offline():
 @pytest.mark.asyncio
 async def test_retrieve_huge_query_live_ollama():
     """Empirically probe live Ollama instance with a >10,000 char query."""
+    import os
     import socket
+    from urllib.parse import urlparse
+    from app.config import get_settings
+
+    base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
 
     s = socket.socket()
-    s.settimeout(0.5)
+    s.settimeout(1.0)
     try:
-        s.connect(("localhost", 11434))
+        s.connect((host, port))
         s.close()
     except Exception:
-        pytest.skip("Ollama is not running on localhost:11434")
+        pytest.skip(f"Ollama is not running on {host}:{port}")
 
     huge_query = ("Tell me everything about product growth loops, onboarding activation, "
                   "and SaaS pricing strategy. ") * 150  # ~14,250 chars
     assert len(huge_query) > 10000
 
-    client = OllamaEmbeddingsClient(base_url="http://localhost:11434")
+    client = OllamaEmbeddingsClient(base_url=base_url)
     vector = await client.get_query_embedding_async(huge_query)
 
     assert len(vector) == 768
@@ -167,14 +176,15 @@ async def test_retrieve_boundary_parameters():
 
     embedder = FakeEmbeddingsClient(dim=768)
 
-    # 1. top_k <= 0 should fall back to settings.retrieval_top_k (default 6)
+    # 1. top_k <= 0 should fall back to settings.retrieval_top_k
+    default_top_k = get_settings().retrieval_top_k
     await retrieve(query="retention", db=mock_db, top_k=0, embedder=embedder)
     stmt0 = mock_db.execute.call_args[0][0]
-    assert stmt0._limit == 6
+    assert stmt0._limit == default_top_k
 
     await retrieve(query="retention", db=mock_db, top_k=-10, embedder=embedder)
     stmt_neg = mock_db.execute.call_args[0][0]
-    assert stmt_neg._limit == 6
+    assert stmt_neg._limit == default_top_k
 
     # 2. top_k = 100
     await retrieve(query="retention", db=mock_db, top_k=100, embedder=embedder)
@@ -414,17 +424,25 @@ async def test_batch_embedding_boundary_sizes_31_32_33_async():
 
 def test_batch_embedding_live_ollama_boundaries():
     """Empirically test live Ollama with 1, 31, 32, and 33 items."""
+    import os
     import socket
+    from urllib.parse import urlparse
+    from app.config import get_settings
+
+    base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
 
     s = socket.socket()
-    s.settimeout(0.5)
+    s.settimeout(1.0)
     try:
-        s.connect(("localhost", 11434))
+        s.connect((host, port))
         s.close()
     except Exception:
-        pytest.skip("Ollama is not running on localhost:11434")
+        pytest.skip(f"Ollama is not running on {host}:{port}")
 
-    client = OllamaEmbeddingsClient(base_url="http://localhost:11434")
+    client = OllamaEmbeddingsClient(base_url=base_url)
 
     for count in [1, 31, 32, 33]:
         texts = [f"Transcript chunk #{i} discussing product-market fit and growth metrics." for i in range(count)]

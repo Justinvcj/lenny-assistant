@@ -98,10 +98,13 @@ async def _run_with_sdk(
     )
 
     settings = get_settings()
+    artifact_sink: Dict[str, Any] = {}
     tool_server = build_tool_server(
+        intent=intent,
         db=db, embedder=embedder, provider=provider, sources=sources,
         top_k=settings.retrieval_top_k, min_score=settings.retrieval_min_score,
         max_artifact_bytes=max_artifact_bytes,
+        artifact_sink=artifact_sink,
     )
 
     with tempfile.TemporaryDirectory(prefix="lenny-agent-") as cwd:
@@ -131,6 +134,11 @@ async def _run_with_sdk(
                         if message.subtype == "init":
                             tools_from_init = message.data.get("tools") or []
                             init_tools.extend(tools_from_init)
+                            logger.info(
+                                "SDK init for intent %s: advertised tools=%r",
+                                intent.value if hasattr(intent, "value") else intent,
+                                tools_from_init,
+                            )
                     elif isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, ToolUseBlock):
@@ -160,49 +168,50 @@ async def _run_with_sdk(
 
         await asyncio.wait_for(_drive(), timeout=timeout_s)
 
-        # Re-run any artifact-producing tool call in-process so we capture the
-        # _artifact payload reliably (the SDK transports only the public
-        # content list, not the auxiliary fields). Safe because the tools are
-        # deterministic given their args.
-        for call in tool_calls:
-            name = call["tool"]
-            args = call.get("input") or {}
-            if name == "mcp__lenny__create_artifact":
-                from app.agent.tools import create_artifact as _ca
-                try:
-                    out = await _ca(
-                        title=args.get("title", "Generated Artifact"),
-                        html=args.get("html", ""),
-                        artifact_type=args.get("artifact_type", "html"),
-                        max_bytes=max_artifact_bytes,
-                    )
-                    artifact_payload = out
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Replay of create_artifact failed: %s", exc)
-            elif name == "mcp__lenny__generate_ship30_essay":
-                if sources and provider is not None:
+        # Retrieve artifact payload captured directly by tool handlers during execution
+        artifact_payload = artifact_sink.get("artifact")
+
+        # Fallback replay ONLY if artifact was not captured by in-process tool handler
+        if not artifact_payload:
+            for call in tool_calls:
+                name = call["tool"]
+                args = call.get("input") or {}
+                if name == "mcp__lenny__create_artifact":
+                    from app.agent.tools import create_artifact as _ca
                     try:
-                        from app.skills.ship30 import generate_essay
-                        result = await generate_essay(
-                            topic=args.get("topic", "").strip() or "growth insights",
-                            sources=list(sources),
-                            provider=provider,
+                        out = await _ca(
+                            title=args.get("title", "Generated Artifact"),
+                            html=args.get("html", ""),
+                            artifact_type=args.get("artifact_type", "html"),
+                            max_bytes=max_artifact_bytes,
                         )
-                        artifact_payload = {
-                            "title": f"Ship 30 Essay: {args.get('topic', '')[:60]}",
-                            "html": result.content,
-                            "type": "markdown",
-                            "size_bytes": len(result.content.encode("utf-8")),
-                            "truncated": False,
-                            "word_count": result.word_count,
-                            "validation_report": {
-                                "passed": result.report.passed,
-                                "failed_rules": result.report.failed_rules,
-                            },
-                            "repaired": result.repaired,
-                        }
+                        artifact_payload = out
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("Replay of ship30 essay failed: %s", exc)
+                        logger.warning("Replay of create_artifact failed: %s", exc)
+                elif name == "mcp__lenny__generate_ship30_essay":
+                    if sources and provider is not None:
+                        try:
+                            from app.skills.ship30 import generate_essay
+                            result = await generate_essay(
+                                topic=args.get("topic", "").strip() or "growth insights",
+                                sources=list(sources),
+                                provider=provider,
+                            )
+                            artifact_payload = {
+                                "title": f"Ship 30 Essay: {args.get('topic', '')[:60]}",
+                                "html": result.content,
+                                "type": "markdown",
+                                "size_bytes": len(result.content.encode("utf-8")),
+                                "truncated": False,
+                                "word_count": result.word_count,
+                                "validation_report": {
+                                    "passed": result.report.passed,
+                                    "failed_rules": result.report.failed_rules,
+                                },
+                                "repaired": result.repaired,
+                            }
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("Replay of ship30 essay failed: %s", exc)
 
         content = ("".join(final_text_parts).strip() or EXACT_REFUSAL_MESSAGE)
         return AgentResult(
@@ -322,12 +331,42 @@ async def run_agent(
         return result
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - t0
+        if intent == Intent.ARTIFACT:
+            logger.warning(
+                "orchestrator: ARTIFACT intent timed out after %.1fs — skipping second provider call per Item 9b",
+                elapsed,
+            )
+            return AgentResult(
+                content="",
+                tool_trace=[{
+                    "degraded": True,
+                    "degraded_reason": f"timeout after {elapsed:.1f}s",
+                    "degraded_exc_type": "TimeoutError",
+                }],
+                degraded=True,
+                runtime="degraded",
+            )
         return await _run_degraded(
             system_prompt, user_message, _provider,
             reason=f"timeout after {elapsed:.1f}s", exc_type="TimeoutError",
         )
     except Exception as exc:  # noqa: BLE001
         elapsed = time.monotonic() - t0
+        if intent == Intent.ARTIFACT:
+            logger.warning(
+                "orchestrator: ARTIFACT intent failed (%s: %s) — skipping second provider call per Item 9b",
+                type(exc).__name__, exc,
+            )
+            return AgentResult(
+                content="",
+                tool_trace=[{
+                    "degraded": True,
+                    "degraded_reason": f"{exc} (after {elapsed:.1f}s)",
+                    "degraded_exc_type": type(exc).__name__,
+                }],
+                degraded=True,
+                runtime="degraded",
+            )
         return await _run_degraded(
             system_prompt, user_message, _provider,
             reason=f"{exc} (after {elapsed:.1f}s)",
