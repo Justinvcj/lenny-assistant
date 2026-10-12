@@ -3,12 +3,14 @@
 Pipeline per PROMPTS.md P6b and Round 2 specification:
   1. Retrieve / accept grounded sources.
   2. Draft H1 headline derived from topic and strongest supported claim.
-  3. Plan outline: hook + N specific body sections + actionable takeaways.
-  4. Draft SECTION BY SECTION with separate LLM calls (7B cannot write 1,250 in one pass).
-  5. Assemble Markdown with strict citation normalization and paragraph deduplication.
-  6. Enforce section word count budgets (80%-125%) with targeted expansion/trimming.
-  7. Run validator. If validation fails, run ONE repair pass on failing sections. Never loop again.
-  8. Return { content, word_count, report, repaired }.
+  3. Plan outline: slot ids and word budgets only (no user-visible section titles).
+  4. Draft SECTION BY SECTION with separate LLM calls.
+  5. Enforce section word count budgets with targeted expansion/trimming.
+  6. Generate heading for each body section after its body is final with ONE short LLM call.
+  7. Assemble Markdown with strict citation normalization and paragraph deduplication.
+  8. Deterministically validate and repair assembled headings before storage.
+  9. Run validator. If validation fails, run ONE repair pass on failing sections.
+  10. Return { content, word_count, report, repaired }.
 
 NEVER loops more than once on repair.
 """
@@ -19,7 +21,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.agent.verify import (
     deduplicate_paragraphs,
@@ -40,11 +42,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SectionPlan:
-    title: str
+    slot_id: str
     word_budget: int
     source_indices: List[int]  # 1-based indices into sources list
     is_hook: bool = False
     is_takeaway: bool = False
+
+    @property
+    def title(self) -> str:
+        return self.slot_id
 
 
 @dataclass
@@ -54,6 +60,31 @@ class EssayResult:
     report: ValidationReport
     repaired: bool = False
     title: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+FALLBACK_HEADINGS: List[str] = [
+    "What the guests say",
+    "Where teams get stuck",
+    "How to put it into practice",
+    "What to measure",
+    "A common mistake to avoid",
+    "A real example",
+]
+
+STOP_WORDS_END = {
+    "a", "an", "the", "of", "to", "for", "in", "on", "with",
+    "and", "or", "other", "about", "from", "by", "at", "as",
+}
+
+KNOWN_BAD_HEADINGS = {
+    "challenge lies identifying right product features",
+    "repeatedly tweaking onboarding flow exploring other",
+    "jeanne dewitt grosser seasoned marketer advises",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +107,11 @@ Sources available:
 Write ONLY the hook paragraph. No heading. No preamble."""
 
 _SECTION_PROMPT = """\
-Write the section titled "## {title}" for a Ship 30-style essay about: {topic}
+Write a body section for a Ship 30-style essay about: {topic}
 
 Requirements:
 - {word_budget} words (stay within 80% to 125% of this budget: {min_budget}–{max_budget} words)
-- Start IMMEDIATELY with "## {title}" heading (no preamble before the heading)
+- Focus on a single distinct operational theme or contrarian insight supported by the sources
 - Use at least 1 bullet list or numbered list
 - Bold at least 1 key insight with **bold**
 - Alternate sentence lengths with dynamic rhythm (e.g. 1/3/1 or 1/5/1 cadences; avoid monotonous blocks)
@@ -93,7 +124,7 @@ Requirements:
 Sources:
 {sources_block}
 
-Write ONLY this section (heading + body). Nothing before or after."""
+Write ONLY this section body. Do not include any heading. Nothing before or after."""
 
 _TAKEAWAY_PROMPT = """\
 Write the final section "## Actionable Takeaways" for a Ship 30-style essay about: {topic}
@@ -112,11 +143,10 @@ Sources:
 Write ONLY this section."""
 
 _EXPANSION_PROMPT = """\
-Expand the following essay section titled "## {title}" to add more operator depth, tactical examples, and execution nuance based ONLY on the provided unused source passages.
+Expand the following essay section to add more operator depth, tactical examples, and execution nuance based ONLY on the provided unused source passages.
 Target: Add about {additional_words} words to this section.
 
 Topic: {topic}
-Section title: {title}
 Current section content:
 ---
 {section_content}
@@ -127,13 +157,13 @@ Unused grounding sources available:
 Allowed citation tags: {allowed_tags}
 
 Requirements:
-- Keep the "## {title}" heading exactly as-is
+- If a "## " heading is present, keep it exactly as-is
 - Add concrete operator frameworks or tactical execution steps based SOLELY on the unused sources above
 - Never hallucinate claims not present in the sources
 - Keep all existing [S#] tags and citations; add [S#] tags from allowed tags for newly added claims
 - Maintain bullet list and bold insights (**text**)
 
-Return ONLY the complete expanded section (heading + expanded body)."""
+Return ONLY the complete expanded section."""
 
 _REPAIR_PROMPT = """\
 Revise this essay section to fix the following validation failures: {failures}
@@ -188,11 +218,7 @@ def _all_source_indices(sources: List[Any]) -> List[int]:
 
 
 async def draft_headline(topic: str, sources: List[Any], provider: LLMProvider) -> str:
-    """Generate an H1 headline following the Ship 30 headline principle.
-
-    Tells the reader who it is for, what it is about, and why to read it,
-    derived from the topic and the strongest supported claim.
-    """
+    """Generate an H1 headline following the Ship 30 headline framework."""
     strongest_claim = ""
     if sources:
         s0 = sources[0]
@@ -231,12 +257,9 @@ Format: Return ONLY the single line: '# [Headline]'. No quotes, no preamble."""
 
 
 def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
-    """Build a section-by-section plan with word budgets targeting ~1,250 words.
+    """Build a section-by-section plan with slot ids and word budgets.
 
-    Structure:
-      - Hook paragraph (~120 words, no heading)
-      - 5 content-specific body sections (~240 words each = 1,200 words)
-      - Actionable Takeaways (~120 words)
+    The plan holds ONLY slot ids and word budgets (no user-visible titles).
     """
     all_idx = _all_source_indices(sources)
     n_body = 5
@@ -246,15 +269,14 @@ def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
     # Hook (no heading section) ~120 words
     hook_srcs = all_idx[:min(2, len(all_idx))]
     plans.append(SectionPlan(
-        title="Hook",
+        slot_id="hook",
         word_budget=120,
         source_indices=hook_srcs if hook_srcs else ([1] if all_idx else []),
         is_hook=True,
     ))
 
-    # 5 Body section themes derived specifically from sources/content (~240 words each)
-    themes = _derive_specific_themes(topic, sources, n_body)
-    for i, theme in enumerate(themes):
+    # 5 Body section slots (~240 words each)
+    for i in range(n_body):
         if all_idx:
             src1 = all_idx[i % len(all_idx)]
             src2 = all_idx[(i + 1) % len(all_idx)]
@@ -262,7 +284,7 @@ def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
         else:
             srcs = []
         plans.append(SectionPlan(
-            title=theme,
+            slot_id=f"body_{i + 1}",
             word_budget=240,
             source_indices=srcs,
         ))
@@ -270,7 +292,7 @@ def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
     # Actionable Takeaways ~120 words
     takeaway_srcs = all_idx[-min(3, len(all_idx)):] if all_idx else []
     plans.append(SectionPlan(
-        title="Actionable Takeaways",
+        slot_id="takeaways",
         word_budget=120,
         source_indices=takeaway_srcs,
         is_takeaway=True,
@@ -281,167 +303,219 @@ def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
     return plans
 
 
-_ANGLE_PATTERNS: List[str] = [
-    "Framing the {kw} problem",
-    "What the data on {kw} shows",
-    "Common pitfalls around {kw}",
-    "Mechanics that make {kw} compound",
-    "Where teams go wrong with {kw}",
-    "Signals and metrics for {kw}",
-    "A step-by-step approach to {kw}",
-    "Making {kw} stick after launch",
-]
+# ---------------------------------------------------------------------------
+# Heading validation, generation, and repair
+# ---------------------------------------------------------------------------
 
 
-def _topic_keyword(topic: str) -> str:
-    """Pick the most content-bearing noun phrase from the topic string.
+def validate_heading(
+    heading: str,
+    topic: str = "",
+    existing_headings: Optional[Sequence[str]] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Deterministically validate a section heading.
 
-    Deterministic (no LLM): strips stopwords and ship-30 wrappers, keeps the
-    first 1–2 content words. Used only to seed section headings.
+    Rules:
+    - 4 to 8 words
+    - First character uppercase
+    - Must NOT end with a stop word (a, an, the, of, to, for, in, on, with, and, or, other, about, from, by, at, as)
+    - Must not match "Angle <number>"
+    - No duplicates (case-insensitive)
+    - At most ONE heading contains the topic string (normalize case and hyphens before comparing)
+    - No sentence fragments or plan titles
     """
-    stop = {
-        "a", "an", "the", "for", "of", "and", "or", "to", "in", "on", "about",
-        "with", "ideas", "insights", "featuring", "early", "stage", "startups",
-        "essay", "ship", "30", "post", "article",
-    }
-    words = re.findall(r"[A-Za-z][A-Za-z-]+", topic.lower())
-    core = [w for w in words if w not in stop and len(w) > 2]
-    if not core:
-        core = words or ["the subject"]
-    return " ".join(core[:2])
+    raw_h = heading.strip()
+    if not raw_h:
+        return False, "Heading is empty"
+
+    clean_h = raw_h.strip('"\'`').strip()
+    if ":" in clean_h:
+        return False, "Heading must not contain colons"
+    if '"' in clean_h or "'" in clean_h:
+        return False, "Heading must not contain quotation marks"
+    if raw_h.endswith((".", ",", ";", "!", "?")):
+        return False, "Heading must not end with trailing punctuation"
+
+    clean_h = clean_h.rstrip(".:,;!?").strip()
+    if not clean_h:
+        return False, "Heading is empty"
+
+    # Known bad headings / fragments
+    if clean_h.lower() in KNOWN_BAD_HEADINGS:
+        return False, f"Heading {clean_h!r} is a sentence fragment"
+
+    # Plan slot / title rejection
+    if clean_h.lower() in {"hook", "takeaway", "takeaways", "actionable takeaways"} or re.match(
+        r"^(?:body|section|slot)[_\s]*\d+$", clean_h, re.I
+    ):
+        return False, f"Heading {clean_h!r} is a plan slot or title"
+
+    # Angle <number>
+    if re.search(r"\bAngle\s+\d+\b", clean_h, re.IGNORECASE):
+        return False, "Heading must not match 'Angle <number>'"
+
+    # Fragment patterns
+    if re.search(r"\b(advises|explains|says|suggests|notes|shares|warns|argues|recommends)\b$", clean_h, re.I):
+        return False, "Heading must not end with a reporting verb"
+    if re.search(r"\b(lies|stands|remains)\s+[a-z]+ing\b", clean_h, re.I):
+        return False, "Heading must not be a sentence fragment"
+
+    # First character uppercase
+    if not clean_h[0].isupper():
+        return False, "First character must be uppercase"
+
+    # Word count: 4 to 8 words (or from FALLBACK_HEADINGS)
+    words = clean_h.split()
+    if clean_h not in FALLBACK_HEADINGS:
+        if len(words) < 4 or len(words) > 8:
+            return False, f"Heading must have 4 to 8 words (got {len(words)})"
+
+    # Must not end with a stop word
+    last_word = re.sub(r"[^\w]", "", words[-1]).lower()
+    if last_word in STOP_WORDS_END:
+        return False, f"Heading must not end with stop word '{words[-1]}'"
+
+    # Duplicates check (case-insensitive)
+    if existing_headings:
+        clean_existing = [h.strip().lower() for h in existing_headings if h.strip()]
+        if clean_h.lower() in clean_existing:
+            return False, f"Duplicate heading {clean_h!r}"
+
+    # Topic string check: at most one heading contains the topic string
+    if topic:
+        norm_topic = re.sub(r"[\s\-]+", " ", topic).strip().lower()
+        if len(norm_topic.split()) >= 2:
+            norm_h = re.sub(r"[\s\-]+", " ", clean_h).strip().lower()
+            if norm_topic in norm_h:
+                already_has_topic = False
+                if existing_headings:
+                    for eh in existing_headings:
+                        if norm_topic in re.sub(r"[\s\-]+", " ", eh).strip().lower():
+                            already_has_topic = True
+                            break
+                if already_has_topic:
+                    return False, f"At most one heading may contain topic string {topic!r}"
+
+    return True, None
 
 
-_HEADING_STOP = {
-    "a", "an", "the", "for", "of", "and", "or", "to", "in", "on", "about",
-    "with", "by", "from", "into", "onto", "over", "that", "this", "these",
-    "those", "it", "its", "is", "are", "was", "were", "be", "been", "being",
-    "do", "does", "did", "doing", "have", "has", "had", "having", "will",
-    "would", "can", "could", "should", "shall", "may", "might", "must",
-    "how", "what", "when", "where", "why", "who", "whom", "which",
-    "think", "say", "says", "said", "need", "needs", "needed", "want",
-    "wants", "wanted", "there", "their", "they", "them", "we", "us", "you",
-    "your", "our", "my", "me", "mine", "really", "just", "very", "much",
-    "many", "any", "some", "all", "every", "each", "every", "no", "not",
-    "but", "also", "than", "then", "so", "if", "else", "while", "because",
-    "like", "as", "at", "up", "out", "down", "off", "over", "under", "again",
-    "startup", "startups", "company", "team", "teams", "user", "users",
-    "ideas", "insights", "featuring", "approach", "approaches", "early",
-    "stage", "ship", "30", "essay", "post", "article", "between",
-    "instance", "example", "specific", "specifically", "particular",
-    "generally", "typically", "actually", "often", "truly", "usually",
-    "according", "according to", "mentioned", "mention", "mentions",
-    "isn", "aren", "don", "doesn", "didn", "won", "wasn", "weren",
-    "something", "someone", "anything", "anyone", "nothing", "none",
-    "around", "across", "whole", "entire", "within", "without", "upon",
-    "makes", "making", "made", "take", "takes", "took", "give", "gives",
-    "given", "find", "finds", "found", "put", "puts",
-}
+async def generate_section_heading(
+    section_text: str,
+    topic: str,
+    existing_headings: Sequence[str],
+    provider: LLMProvider,
+) -> str:
+    """Generate a heading for a final section body using ONE short LLM call."""
+    lines = [l for l in section_text.splitlines() if not l.lstrip().startswith("#")]
+    body_only = "\n".join(lines).strip() or section_text.strip()
+
+    prompt = (
+        "Given the following essay section text, output only a heading of 4 to 8 words "
+        "in Title Case, specific to the section's main claim, no colon, no quotation marks, "
+        "no trailing punctuation, not containing the essay topic string, and not a sentence fragment.\n\n"
+        f"Section text:\n{body_only}"
+    )
+
+    # Attempt 1
+    resp = await provider.chat(
+        [ChatMessage(role="user", content=prompt)],
+        temperature=0.2,
+        max_tokens=60,
+    )
+    raw_h = resp.content.strip().splitlines()[0].lstrip("#").strip() if resp.content else ""
+    raw_h = raw_h.strip('"\'`').rstrip(".:,;!?").strip()
+
+    valid, reason = validate_heading(raw_h, topic=topic, existing_headings=existing_headings)
+    if valid:
+        return raw_h
+
+    logger.warning("Heading attempt 1 invalid (%s): %r. Retrying once.", reason, raw_h)
+
+    # Retry once with failure reason appended to instruction
+    retry_prompt = (
+        f"{prompt}\n\n"
+        f"Previous attempt was rejected: {reason}. "
+        "Please output only a valid heading meeting all instructions."
+    )
+    resp2 = await provider.chat(
+        [ChatMessage(role="user", content=retry_prompt)],
+        temperature=0.2,
+        max_tokens=60,
+    )
+    raw_h2 = resp2.content.strip().splitlines()[0].lstrip("#").strip() if resp2.content else ""
+    raw_h2 = raw_h2.strip('"\'`').rstrip(".:,;!?").strip()
+
+    valid2, reason2 = validate_heading(raw_h2, topic=topic, existing_headings=existing_headings)
+    if valid2:
+        return raw_h2
+
+    logger.warning("Heading attempt 2 invalid (%s): %r. Using fallback label.", reason2, raw_h2)
+
+    # Fallback to first unused label from FALLBACK_HEADINGS
+    clean_existing = [h.strip().lower() for h in existing_headings]
+    for fallback in FALLBACK_HEADINGS:
+        if fallback.lower() not in clean_existing:
+            return fallback
+
+    return FALLBACK_HEADINGS[0]
 
 
-def derive_heading_from_section(section_text: str, topic: str) -> str:
-    """Derive a 3–8 word content-specific heading from a drafted section body.
+def repair_assembled_headings(essay_md: str, topic: str = "") -> str:
+    """Validate and repair headings on assembled markdown essay.
 
-    Deterministic (no LLM call): looks for the first sentence that contains an
-    `[S#]` citation (= the first supported claim); otherwise the first non-empty
-    sentence after the placeholder heading. Strips stop-words, caps 3–8 words,
-    removes colons, and never emits the full multi-word topic string verbatim.
-
-    The brief's "one short LLM call" variant can wrap this later; the fallback
-    is the always-safe path and is what the pipeline uses by default.
+    Ensures no bad heading reaches storage. Body headings that fail validation
+    are replaced with the first unused label from FALLBACK_HEADINGS.
     """
-    text = section_text or ""
-    # Strip the opening '## OLD' placeholder heading if present
-    lines = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
-    body = "\n".join(lines).strip() or text.strip()
-    # Find first [S#]-bearing sentence, else first sentence.
-    sentences = re.split(r"(?<=[.!?])\s+", body)
-    picked: str = ""
-    for s in sentences:
-        if re.search(r"\[S\d+\]", s):
-            picked = s
-            break
-    if not picked and sentences:
-        picked = sentences[0]
-    if not picked:
-        picked = topic or "key insight"
+    lines = essay_md.splitlines()
+    repaired_lines = []
+    seen_headings: List[str] = []
 
-    # Pull content words (preserve order, dedup, drop stop-words).
-    tokens = re.findall(r"[A-Za-z][A-Za-z-]+", picked)
-    content: List[str] = []
-    seen: set = set()
-    for t in tokens:
-        lower = t.lower()
-        if lower in _HEADING_STOP:
-            continue
-        if lower in seen:
-            continue
-        seen.add(lower)
-        content.append(t)
-        if len(content) >= 6:
-            break
-
-    if len(content) < 3:
-        # Pad with topic-adjacent nouns the fallback way: pull from topic itself.
-        topic_tokens = [t for t in re.findall(r"[A-Za-z][A-Za-z-]+", topic or "")
-                        if t.lower() not in _HEADING_STOP]
-        for t in topic_tokens:
-            if t.lower() in seen:
+    for line in lines:
+        m = re.match(r"^##\s+(.+)$", line)
+        if m:
+            h = m.group(1).strip()
+            # Hook has no heading; Takeaways & Sources are fixed
+            if h in ("Actionable Takeaways", "Sources") or h.startswith("Actionable Takeaways"):
+                repaired_lines.append(line)
                 continue
-            seen.add(t.lower())
-            content.append(t)
-            if len(content) >= 5:
-                break
-    if len(content) < 3:
-        content = (content + ["Key", "insight", "surfaces"])[:3]
+            valid, reason = validate_heading(h, topic=topic, existing_headings=seen_headings)
+            if valid:
+                seen_headings.append(h)
+                repaired_lines.append(line)
+            else:
+                # Pick first unused fallback
+                chosen = None
+                clean_seen = [sh.lower() for sh in seen_headings]
+                for fb in FALLBACK_HEADINGS:
+                    if fb.lower() not in clean_seen:
+                        chosen = fb
+                        break
+                if not chosen:
+                    chosen = FALLBACK_HEADINGS[0]
+                seen_headings.append(chosen)
+                repaired_lines.append(f"## {chosen}")
+                logger.info("Repaired assembled heading: %r -> %r (reason: %s)", h, chosen, reason)
+        else:
+            repaired_lines.append(line)
 
-    # Final shape: Title Case words, no colon, no full-topic-string match.
-    heading = " ".join(w[0].upper() + w[1:] for w in content[:8])
-    topic_norm = (topic or "").strip().lower()
-    if topic_norm and len(topic_norm.split()) >= 2 and topic_norm in heading.lower():
-        # Only drop topic words if the heading has slack above the 3-word floor.
-        trial = heading
-        for t in topic_norm.split():
-            trial = re.sub(rf"\b{re.escape(t)}\b", "", trial, flags=re.I).strip()
-        trial = re.sub(r"\s+", " ", trial).strip()
-        if len(trial.split()) >= 3:
-            heading = trial
-    heading = heading.replace(":", "").strip()
-    if not heading:
-        heading = "Key insight surfaces"
-    return heading
+    return "\n".join(repaired_lines)
 
 
-def _derive_specific_themes(topic: str, sources: List[Any], n: int = 5) -> List[str]:
-    """Derive distinct, content-specific body headings per topic (D1 fix).
-
-    Deterministic: no LLM call at the planning step; the per-section drafts can
-    still refine content. The headings vary by topic because they interpolate a
-    keyword drawn from the topic itself. Guarantees:
-      - no heading is in the old hard-coded template list;
-      - no two body headings are identical;
-      - no heading contains the full (multi-word) topic string;
-      - each heading is 3–10 words.
-    """
-    kw = _topic_keyword(topic) or "the subject"
-    themes: List[str] = []
-    topic_lower = topic.strip().lower()
-    for pattern in _ANGLE_PATTERNS:
-        if len(themes) >= n:
-            break
-        candidate = pattern.format(kw=kw).strip()
-        # Guard: do not emit the full topic string verbatim as a heading.
-        if len(topic_lower.split()) >= 2 and topic_lower in candidate.lower():
-            continue
-        if candidate in themes:
-            continue
-        themes.append(candidate)
-    # Safety: if we somehow could not fill n unique themes, pad with
-    # position-numbered variants rather than reusing one.
-    i = 2
-    while len(themes) < n:
-        themes.append(f"Angle {i} on {kw}")
-        i += 1
-    return themes[:n]
+def derive_heading_from_section(section_text: str, topic: str = "") -> str:
+    """Deterministic fallback helper for deriving a heading from a section."""
+    lines = [l for l in section_text.splitlines() if not l.lstrip().startswith("#")]
+    body = "\n".join(lines).strip() or section_text.strip()
+    words = [w for w in re.findall(r"[A-Za-z]+", body) if len(w) > 2]
+    if len(words) >= 4:
+        candidate = " ".join(w.capitalize() for w in words[:5])
+        valid, _ = validate_heading(candidate, topic=topic)
+        if valid:
+            return candidate
+    for fb in FALLBACK_HEADINGS:
+        valid, _ = validate_heading(fb, topic=topic)
+        if valid:
+            return fb
+    return FALLBACK_HEADINGS[0]
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +553,6 @@ async def draft_section(
     else:
         prompt = _SECTION_PROMPT.format(
             topic=topic,
-            title=plan.title,
             word_budget=plan.word_budget,
             min_budget=min_budget,
             max_budget=max_budget,
@@ -501,13 +574,10 @@ async def draft_section(
         return cleaned
 
     if not plan.is_hook and not plan.is_takeaway:
-        # Ensure section starts cleanly with '## {title}'
-        # If model outputted preamble or hook text before '##', strip it
-        h2_idx = raw_text.find("##")
-        if h2_idx != -1:
-            raw_text = raw_text[h2_idx:].strip()
-        elif not raw_text.startswith("##"):
-            raw_text = f"## {plan.title}\n\n{raw_text}"
+        # Strip any heading so drafted[i] contains the section body.
+        # Its heading will be generated after the body is final.
+        cleaned = re.sub(r"^##\s+[^\n]+\n*", "", raw_text).strip()
+        return cleaned or raw_text
 
     return raw_text
 
@@ -550,7 +620,6 @@ async def expand_section(
     additional_words: int = 120,
 ) -> str:
     """Expand a single short section with a targeted expansion prompt using unused sources."""
-    # Find unused sources for this section
     used_set = set(section_plan.source_indices)
     unused_indices = [i for i in _all_source_indices(sources) if i not in used_set]
     if not unused_indices:
@@ -560,7 +629,6 @@ async def expand_section(
     allowed_tags = ", ".join(f"[S{i}]" for i in unused_indices) or "[S1]"
 
     prompt = _EXPANSION_PROMPT.format(
-        title=section_plan.title,
         additional_words=additional_words,
         topic=topic,
         section_content=section_content,
@@ -624,21 +692,21 @@ async def repair_section(
         failures="; ".join(failures),
         topic=topic,
         section_content=section_content,
+        word_budget=section_plan.word_budget,
         allowed_tags=allowed_tags,
         sources_block=sources_block,
-        word_budget=section_plan.word_budget,
     )
     resp = await provider.chat(
         [ChatMessage(role="user", content=prompt)],
-        temperature=0.2,
-        max_tokens=700,
+        temperature=0.3,
+        max_tokens=650,
     )
     repaired = resp.content.strip()
     return repaired if repaired else section_content
 
 
 # ---------------------------------------------------------------------------
-# 5. Main entry point
+# 5. Main essay generation pipeline
 # ---------------------------------------------------------------------------
 
 
@@ -647,16 +715,7 @@ async def generate_essay(
     sources: List[Any],
     provider: LLMProvider,
 ) -> EssayResult:
-    """Full Ship 30 essay pipeline targeting ~1,250 words (1,000-1,500 bounds).
-
-    Args:
-        topic:    Essay topic (from user message).
-        sources:  List of retrieved transcript chunks.
-        provider: LLM provider to call for text generation.
-
-    Returns:
-        EssayResult with content, word_count, and ValidationReport.
-    """
+    """Full Ship 30 essay pipeline targeting ~1,250 words (1,000-1,500 bounds)."""
     if not sources:
         logger.warning("generate_essay: no sources provided, essay will be ungrounded")
 
@@ -668,7 +727,7 @@ async def generate_essay(
     headline = await draft_headline(topic, sources, provider)
     timings.append(("Headline", (time.perf_counter() - t_h0) * 1000))
 
-    # 2. Plan outline
+    # 2. Plan outline: holds only slot ids and word budgets
     t_o0 = time.perf_counter()
     outline = plan_outline(topic, sources)
     timings.append(("Outline Planning", (time.perf_counter() - t_o0) * 1000))
@@ -683,67 +742,17 @@ async def generate_essay(
         timings.append((f"Section: {plan.title}", t_sec_ms))
         logger.debug("Drafted section %r (%.1fms, %d chars)", plan.title, t_sec_ms, len(text))
 
-    # 4. Replace each body section's placeholder heading with one derived
-    # deterministically from the section's first supported claim (STEP 4).
-    for i, plan in enumerate(outline):
-        if plan.is_hook or plan.is_takeaway:
-            continue
-        content_heading = derive_heading_from_section(drafted[i], topic=topic)
-        if content_heading:
-            # Replace the first '## <anything>' line with the new heading.
-            drafted[i] = re.sub(
-                r"^##\s+[^\n]+",
-                f"## {content_heading}",
-                drafted[i],
-                count=1,
-                flags=re.M,
-            )
-            if not drafted[i].lstrip().startswith("#"):
-                drafted[i] = f"## {content_heading}\n\n" + drafted[i].lstrip()
-
-    # Ensure body-section headings are unique after derivation.
-    seen_headings: set = set()
-    for i, plan in enumerate(outline):
-        if plan.is_hook or plan.is_takeaway:
-            continue
-        m = re.match(r"\s*##\s+(.+)", drafted[i])
-        if not m:
-            continue
-        h = m.group(1).strip()
-        if h.lower() in seen_headings:
-            # Append a short disambiguator pulled from the first non-stop token
-            # after the current heading content.
-            extra = f" Angle {i}"
-            new_h = (h + extra).strip()
-            drafted[i] = drafted[i].replace(f"## {h}", f"## {new_h}", 1)
-            h = new_h
-        seen_headings.add(h.lower())
-
-    # Assemble
-    essay_md = assemble_essay(headline, drafted)
-
-    # 5. Enforce section word count budgets (80%-125%)
-    body_budget = 240
-    min_budget = int(body_budget * 0.80)  # 192 words
-    max_budget = int(body_budget * 1.25)  # 300 words
-
-    body_indices = [
-        i for i, p in enumerate(outline)
-        if not p.is_hook and not p.is_takeaway
-    ]
-
-    # Assemble after drafting
+    # 4. Enforce section word count budgets (80%-125%)
     essay_md = assemble_essay(headline, drafted)
     current_wc = count_body_words(essay_md)
 
-    # R3: canonical length range comes from the rules metadata.
     from app.skills.validator import load_rules_config as _load_rules
     _meta = _load_rules().get("metadata", {})
     LEN_MIN = _meta.get("min_word_count", 1100)
     LEN_MAX = _meta.get("max_word_count", 1400)
     LEN_TRIM = _meta.get("trim_target", 1350)
 
-    # If above max, trim excess from longest body sections down to <=trim_target.
+    # Trim if above max
     t_trim0 = time.perf_counter()
     if current_wc > LEN_MAX:
         logger.info("Essay word count %d > %d: trimming to <=%d", current_wc, LEN_MAX, LEN_TRIM)
@@ -752,10 +761,7 @@ async def generate_essay(
         current_wc = count_body_words(essay_md)
     timings.append(("Trimming / Budget", (time.perf_counter() - t_trim0) * 1000))
 
-    # R3 expansion: if below min, run up to 2 expansion passes that may only
-    # add sentences supported by unused source passages (expand_section
-    # already restricts allowed_tags to unused sources). After each pass we
-    # re-run the quote-deletion / citation-normalization / support checks.
+    # Expand if below min
     t_exp0 = time.perf_counter()
     expand_passes = 0
     while current_wc < LEN_MIN and expand_passes < 2:
@@ -793,14 +799,34 @@ async def generate_essay(
             break
     timings.append(("Expansion Passes", (time.perf_counter() - t_exp0) * 1000))
 
-    # STEP 2: delete sentences with unverified direct quotes BEFORE the first
-    # validation pass so fabricated quotes never reach the user.
+    # 5. Generate headings with ONE short LLM call per section now that bodies are final
+    t_head0 = time.perf_counter()
+    assigned_headings: List[str] = []
+    for i, plan in enumerate(outline):
+        if plan.is_hook or plan.is_takeaway:
+            continue
+        h = await generate_section_heading(
+            section_text=drafted[i],
+            topic=topic,
+            existing_headings=assigned_headings,
+            provider=provider,
+        )
+        assigned_headings.append(h)
+        body_only = re.sub(r"^##\s+[^\n]+\n*", "", drafted[i]).strip()
+        drafted[i] = f"## {h}\n\n{body_only}"
+    timings.append(("Heading Generation", (time.perf_counter() - t_head0) * 1000))
+
+    # 6. Assemble essay and repair headings deterministically
+    essay_md = assemble_essay(headline, drafted)
+    essay_md = repair_assembled_headings(essay_md, topic=topic)
+
+    # Delete sentences with unverified direct quotes before validation
     from app.agent.verify import strip_unverified_quote_sentences
     essay_md, pre_quotes_deleted = strip_unverified_quote_sentences(essay_md, sources)
     if pre_quotes_deleted:
         logger.warning("ship30 pre-validate: deleted %d unverified-quote sentence(s)", pre_quotes_deleted)
 
-    # 6. Validate
+    # 7. Validate
     t_val0 = time.perf_counter()
     report = validate_essay(essay_md, sources, topic=topic)
     timings.append(("Validation Pass 1", (time.perf_counter() - t_val0) * 1000))
@@ -821,7 +847,7 @@ async def generate_essay(
             title=headline,
         )
 
-    # 7. ONE repair pass on failing sections (structure & citations)
+    # 8. ONE repair pass on failing sections (structure & citations)
     t_rep0 = time.perf_counter()
     repaired_any = False
     for plan in outline:
@@ -846,13 +872,10 @@ async def generate_essay(
             logger.info("Repaired section %r", plan.title)
     timings.append(("Repair Pass", (time.perf_counter() - t_rep0) * 1000))
 
-    # Reassemble after repairs
+    # Reassemble after repairs and repair headings
     essay_md = assemble_essay(headline, drafted)
+    essay_md = repair_assembled_headings(essay_md, topic=topic)
 
-    # STEP 2: enforce the "no unverified direct quote in a stored essay" policy.
-    # Any sentence containing a ≥6-word quoted span that isn't an exact
-    # (normalized) substring of a cited chunk is DELETED before storage.
-    from app.agent.verify import strip_unverified_quote_sentences
     essay_md, quotes_deleted = strip_unverified_quote_sentences(essay_md, sources)
     if quotes_deleted:
         logger.warning("ship30: deleted %d sentence(s) with unverified direct quotes", quotes_deleted)

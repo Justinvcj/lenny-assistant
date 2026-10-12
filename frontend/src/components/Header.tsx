@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Plus } from 'lucide-react';
 
 export interface HeaderProps {
   provider?: string | null;
@@ -7,6 +7,7 @@ export interface HeaderProps {
   healthStatus?: 'ok' | 'degraded' | 'offline' | string;
   isSidebarOpen?: boolean;
   onToggleSidebar: () => void;
+  onNewChat?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,11 +16,13 @@ export const Header: React.FC<HeaderProps> = ({
   healthStatus = 'ok',
   isSidebarOpen = false,
   onToggleSidebar,
+  onNewChat,
 }) => {
   const isOk = healthStatus === 'ok';
   const isDegraded = healthStatus === 'degraded';
   const dotClass = isOk ? 'ok' : isDegraded ? 'degraded' : 'offline';
   const statusLabel = isOk ? 'online' : isDegraded ? 'degraded' : 'offline';
+  const visualStatusText = isOk ? 'OK' : isDegraded ? 'Degraded' : 'Offline';
 
   const modelText = provider && model ? `${provider} · ${model}` : 'Ollama · qwen2.5:7b';
 
@@ -43,6 +46,19 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-status-cluster" role="region" aria-label="System status">
+        {onNewChat && (
+          <button
+            type="button"
+            className="btn-header-new-chat"
+            onClick={onNewChat}
+            aria-label="New conversation"
+            title="New chat"
+          >
+            <Plus size={15} aria-hidden="true" />
+            <span className="header-new-chat-text">New</span>
+          </button>
+        )}
+
         <div
           className="health-status-badge"
           role="status"
@@ -52,7 +68,8 @@ export const Header: React.FC<HeaderProps> = ({
             className={`status-dot ${dotClass}`}
             aria-hidden="true"
           />
-          <span>{statusLabel}</span>
+          <span className="status-label">{visualStatusText}</span>
+          <span className="sr-only">{statusLabel}</span>
         </div>
 
         <div

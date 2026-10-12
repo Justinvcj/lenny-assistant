@@ -67,6 +67,27 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
           </button>
         ))}
       </div>
+
+      <div className="empty-state-hints">
+        <span className="empty-hint-label">💡 Follow-up hints:</span>
+        <button
+          type="button"
+          className="empty-hint-chip"
+          onClick={() => handleSelect('Turn that into a Ship 30 essay')}
+          aria-label="Suggest: Turn that into a Ship 30 essay"
+        >
+          "Turn that into a Ship 30 essay"
+        </button>
+        <span className="empty-hint-separator">or</span>
+        <button
+          type="button"
+          className="empty-hint-chip"
+          onClick={() => handleSelect('Make a one-pager (HTML)')}
+          aria-label="Suggest: Make a one-pager (HTML)"
+        >
+          "Make a one-pager (HTML)"
+        </button>
+      </div>
     </section>
   );
 };

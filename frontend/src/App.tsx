@@ -338,6 +338,7 @@ export const App: React.FC = () => {
         healthStatus={healthStatus}
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+        onNewChat={handleNewChat}
       />
 
       {/* 2. Responsive 3-Region Layout Body */}

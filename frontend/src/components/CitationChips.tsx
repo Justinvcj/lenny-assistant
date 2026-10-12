@@ -19,7 +19,7 @@ export const CitationChip: React.FC<CitationChipProps> = ({
   guest,
   title,
 }) => {
-  const displayText = label || `[S${citationNumber}]`;
+  const displayText = label || `S${citationNumber}`;
   const accessibleLabel = guest && title 
     ? `Source S${citationNumber}: ${guest} — ${title}` 
     : `Source S${citationNumber}`;
@@ -31,6 +31,7 @@ export const CitationChip: React.FC<CitationChipProps> = ({
       onClick={() => onClick(citationNumber)}
       aria-label={accessibleLabel}
       title={accessibleLabel}
+      data-guest={guest ? ` ${guest}` : ''}
     >
       {displayText}
     </button>
@@ -194,9 +195,9 @@ export const CitationChips: React.FC<CitationChipsProps> = ({
                     {c.doc_slug}
                   </span>
                 </div>
-                <div className="source-passage-box">
+                <blockquote className="source-passage-box">
                   {c.passage}
-                </div>
+                </blockquote>
               </div>
             );
           })}
