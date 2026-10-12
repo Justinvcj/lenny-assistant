@@ -24,7 +24,7 @@ Trust (not coverage) is the product: a smaller set of answers that are provably 
 | M1 | Retrieval hit@6: expected episode appears in top-6 chunks (in-scope eval questions) | ≥ 85% | `scripts/eval.py` | not yet measured |
 | M2 | Citation validity: every non-refusal answer has ≥1 `[S#]` that maps to a retrieved chunk, and 0 invented sources | 100% | eval + unit tests | n/a (stub) |
 | M3 | Refusal accuracy on out-of-scope questions | ≥ 90% | eval (≥5 OOS questions) | 10/10 with stub tool |
-| M4 | Faithfulness: answer claim matches source; essays' support score (sentences supported by cited chunks) | ≥ 70% support score on essays | validator R_GROUNDED_SUPPORT; manual review for QA | Spike: 80% (12/15) — 2 reversed, 1 embellished. **RUN3 live essays: 12.5% (PLG) and 18.5% (pricing)** — well below the 70% target; essays currently pass length/citation checks but fail support. |
+| M4 | Faithfulness: answer claim matches source; essays' support score (sentences supported by cited chunks) | ≥ 70% support score on essays (set at build time; **known miss** — not relaxed, see §9) | validator R_GROUNDED_SUPPORT; manual review for QA | Spike QA: 80% (12/15) — 2 reversed, 1 embellished. **RUN3 live essays: 12.5% (PLG) and 18.5% (pricing)** — well below 70%. Essays pass length/citation/no-fabricated-quote checks but the sentence-level support overlap is weak because the model paraphrases around the `[S#]` anchors. Target intentionally **not** adjusted downward; disclosed as a residual defect. |
 | M5 | End-to-end latency on demo hardware (Ollama local, qwen2.5:7b) | QA p50 ≤ 20 s | logs (`total_ms`) | **RUN3 live: refusal p50 0.0 s; grounded QA p50 ≈ 13 s, p95 ≈ 38 s (n = 12 across 6 live sessions); deterministic artifact 0.1 s.** |
 | M6 | Essay skill output within length and structure rules | Body words in canonical 1,100–1,400 range | validator R_LENGTH | **RUN3 live: Flow 2 (PLG) 1,119 body words; Flow 3 (pricing) 1,122 body words — both in range after expansion loop.** |
 | M7 | Time to a sourced answer vs re-listening | ≥10 min manual baseline → ≤ 1 min with the assistant for cached, previously-grounded questions | assumption, demo evidence | Assumption; not instrumented against users. |
@@ -60,15 +60,17 @@ Trust (not coverage) is the product: a smaller set of answers that are provably 
 ### 1.6 Risks and trade-offs
 | Risk | Evidence/likelihood | Mitigation | Residual |
 |---|---|---|---|
-| Hallucination by small local model | Spike: reversed claim 2/15 | Source-numbered prompts, `[S#]` validation, show source passage in UI, refusal without LLM call on weak retrieval, eval metric M4 | Not eliminated; disclosed |
+| Hallucination by small local model | Spike: reversed claim 2/15 | Source-numbered prompts, `[S#]` validation, show source passage in UI, refusal without LLM call on weak retrieval, eval metric M4 | **Material**: RUN3 essays scored 12.5% / 18.5% on sentence support (target 70%). See §9. |
+| Essay headings leak templated placeholders ("Angle N on <topic>") | RUN3 live: both Flow 2 and Flow 3 failed R_SPECIFIC_HEADINGS; `derive_heading_from_section` returns empty when a section's first sentence has no `[S#]` tag | Validator flags the leak; no runtime remediation yet | **Material** — disclosed in §9 |
+| Short follow-up refusals ("Why is that?") after a grounded answer | RUN3 live: 2 of 6 Q2 turns refused even after the R1 score-gate bypass | Verifier allowed to refuse after one retry; prompt-side investigation open | Medium |
 | Tool-skipping by small model | Spike: skipped tool 4/4 on one question | Retrieval always runs in code (D1) | Low |
 | Agent runtime overhead/confusion | Spike: 21.7k-token prompt with 26 built-in tools | Allowlist only our tools (D3), per-intent tool menu (D2) | Low |
-| Latency on local model | 15 s for a stubbed call; real RAG slower | Progress UI, small context, p50 target 20 s | Medium on weak hardware |
-| Cost of cloud API | Zero budget | Local default; cloud optional | — |
-| Transcript IP leakage | Content is someone's IP | Not committed to repo; internal-use assumption | Client must confirm licensing |
-| XSS from generated HTML | Model output is untrusted | Sandboxed iframe (no scripts, no same-origin) + DOMPurify + CSP | See security.md |
-| Prompt injection via transcript text | Retrieved text enters the prompt | Treated as data in delimiters; agent has no side-effecting tools; locked-down runtime | Residual: could skew an answer |
-| Ollama/DB down | Likely during demo | Health checks, typed errors, degraded mode | — |
+| Latency on local model | RUN3: QA p50 ≈ 13 s / p95 ≈ 38 s; essays 155-163 s with GPU | Progress UI, small context, retrieval-first | Medium on CPU-only hardware |
+| Cost of cloud API | Zero budget | Local default; cloud optional | Anthropic path UNTESTED with a real key |
+| Transcript IP leakage | Content is upstream repo's IP | Not committed to repo; `./data/` gitignored; fetched on first-run | Client must confirm licensing for their use |
+| XSS from generated HTML | Model output is untrusted | Sandboxed iframe (`sandbox=""`, no scripts, no same-origin) + DOMPurify + CSP | See docs/security.md |
+| Prompt injection via transcript text | Retrieved text enters the prompt | Treated as data in delimiters; agent has no side-effecting tools; locked-down runtime | Residual: could skew an answer, not escape the sandbox |
+| Ollama/DB down | Likely during demo | Health checks, typed errors, 503 db_unavailable, 502 llm_unavailable, agent-runtime timeout → degraded mode | Verified in RUN3 |
 
 ### 1.7 Questions I would ask the client (and the assumption I made instead)
 1. How many users and how sensitive is the content? → A2, A7.
@@ -81,19 +83,31 @@ Trust (not coverage) is the product: a smaller set of answers that are provably 
 ---
 
 ## 2. Discovery evidence (measured before building)
-See SPEC.md §9 and `spike/SPIKE_LOG.md`. Key finding that shaped the design: **a 7B model through an agent framework is reliable only when (a) retrieval is forced in code and (b) the tool list is minimal.**
+See SPEC.md §9 and `spike/SPIKE_LOG.md`. Key finding that shaped the design: **a 7B model through an agent framework is reliable only when (a) retrieval is forced in code and (b) the tool list is minimal.** Measured corpus (RUN3 live, verified via `/health`): **302 transcript documents, 21,994 vector chunks** indexed in pgvector; 768-dim `nomic-embed-text` embeddings; HNSW retrieval latency under 25 ms.
+
+Audit trail for every live number in this document: [docs/FIX_LOG.md](FIX_LOG.md) RUN3.
 
 ## 3. User flows
-- **F1 First question:** user asks → router=QA → retrieve top-6 → agent answers with `[S#]` tags → UI shows answer, citation chips, source passages, latency.
-- **F2 Follow-up:** "What about B2B?" → last N turns included → retrieval query rewritten using history → answer.
-- **F3 Out-of-scope:** retrieval below threshold → refusal sentence, no LLM call, suggestion to rephrase.
-- **F4 Essay:** "Turn that into a Ship 30 essay" → router=ESSAY → skill retrieves/uses prior grounded sources → drafts section by section → validator → essay stored as artifact → opens in viewer.
-- **F5 Artifact:** "Make an HTML one-pager of this" → router=ARTIFACT → artifact saved → viewer renders sandboxed.
+- **F1 First question:** user asks → router=QA → retrieve top-k → agent answers with `[S#]` tags → UI shows answer, citation chips, source passages, latency.
+- **F2 Follow-up — standalone:** "What about B2B?" / "Can you give an example of that?" → `rewrite_query` enriches with prior Q + ~200 chars of prior answer + cited guest/title → retrieval + normal score gate.
+- **F2' Follow-up — short/anaphoric (R1 bypass):** "Why is that?" / "Can you explain that more?" when the last assistant turn was a grounded answer with ≥1 citation → bypass the retrieval score gate, merge the prior answer's cited chunks with fresh retrieval (dedupe, cap at `retrieval_top_k`) → normal agent + verifier (one retry allowed, then refusal).
+- **F3 Out-of-scope:** retrieval below threshold → refusal sentence, **no LLM call**, logged as `refusal_below_retrieval_threshold`.
+- **F4 Essay:** "Turn that into a Ship 30 essay" → router=ESSAY → skill plans outline, drafts per section, up to 2 expansion passes (unused sources only), repair pass, trim pass → validator → essay stored as artifact → opens in viewer.
+- **F5 Artifact:** "Make an HTML one-pager of this" → router=ARTIFACT → **deterministic** Markdown → HTML build from the prior grounded answer (no new LLM call) → viewer renders sandboxed.
 - **F6 New session:** new chat = new context; old sessions listed and restorable.
-- **F7 Degraded:** Ollama down → clear error banner and health status; DB down → 503 with code; agent runtime failure → direct-provider fallback flagged `degraded`.
+- **F7 Degraded:** Ollama down → `/health` degraded, 502 `llm_unavailable`; DB down → 503 `db_unavailable`; agent-runtime failure → direct-provider fallback flagged `degraded: true`. **Never a silent switch between providers.**
 
 ## 4. Functional requirements
-FR1 Create/list/get sessions; persist messages with citations. FR2 Chat endpoint returns answer, citations (with passages), intent, latency, degraded flag. FR3 Ingestion CLI: parse → chunk → embed → store, idempotent by content hash. FR4 Retrieval with similarity score and threshold. FR5 Intent router (QA / ESSAY / ARTIFACT). FR6 Ship 30 skill with rule file + validator. FR7 Artifact CRUD (create/read) with type markdown|html. FR8 Provider toggle by config; `/config` reports active provider/model. FR9 `/health` reports db, ollama, embedding model, vector count. FR10 Frontend: chat, sessions, artifact panel, model badge, loading/error/empty states.
+- **FR1 Sessions**: create / list / get; persist messages with citations (chunk_id, title, guest, passage).
+- **FR2 Chat endpoint**: returns `{content, citations, intent, latency_ms, degraded, warnings, artifact?}`.
+- **FR3 Ingestion CLI**: parse → chunk → embed → store, idempotent by content hash; `--reset` flag.
+- **FR4 Retrieval**: cosine similarity, top-k, `RETRIEVAL_MIN_SCORE` floor, source-numbered output.
+- **FR5 Intent router**: deterministic rule-based QA / ESSAY / ARTIFACT classification.
+- **FR6 Ship 30 skill**: `ship30_rules.yaml` + validator (R_LENGTH, R_HEADLINE, R_HOOK, R_STRUCTURE, R_SPECIFIC_HEADINGS, R_SECTION_BUDGET, R_NO_DUPLICATE_PARAGRAPHS, R_CITATION_FORMAT, R_FORMATTING, R_TAKEAWAY, R_CITATION, R_GROUNDED_SUPPORT).
+- **FR7 Artifacts**: CRUD (create / read) with type `markdown` or `html`; deterministic summary pipeline; `ARTIFACT_MAX_BYTES` gate.
+- **FR8 Provider toggle**: `LLM_PROVIDER` env; `/health` and the UI badge report the active provider/model.
+- **FR9 Health probe**: `/health` reports `database.{connected, vector_count, ingested}`, `provider.{name, model, ok, reason}`, `ollama.{reachable, llm_model_present, embedding_model_present}`.
+- **FR10 Frontend**: chat, sessions, artifact viewer (sandboxed iframe), model badge, loading / error / empty / degraded states; accessible (keyboard, contrast, live regions).
 
 ## 5. Non-functional requirements
 Security per docs/security.md; structured JSON logs; no stack traces to clients; one-command start; tests runnable without Ollama; accessible UI (keyboard, contrast, live regions).
@@ -118,10 +132,11 @@ Security per docs/security.md; structured JSON logs; no stack traces to clients;
 ## 7. Implementation plan
 Discovery evidence lives in `spike/SPIKE_LOG.md`; the ordering heuristic ("never cut PRD, cited RAG, Ship 30 skill, artifact sandbox, README, video; cut UI polish, extra tests, cloud provider testing, streaming first") is documented in `transcripts/process/` (see `START_HERE.md`).
 
-## 8. Open items
-- Ship 30 heading derivation misses sections whose first sentence lacks a `[S#]` tag — placeholder "Angle N on …" leaks (RUN3 Flow 3 live). Not fixed; flagged in Known Limitations.
-- Essay support score consistently below 70% target on live runs — model's own synthesis dilutes direct source overlap. Needs stricter sentence-level verifier gating or an evidence-first drafting path.
-- Anthropic provider path never exercised with a valid key.
+## 8. Open items (deferred, not blocking submission)
+- Headings: content-first heading generator for the sections where `derive_heading_from_section` returns empty (see §9).
+- Support score: evidence-first drafting prompt or sentence-level verifier gate (see §9).
+- Cloud provider: a single sanity run with a real Anthropic key (budget-permitting).
+- Trim pass: exercise the >1,400-word path on a real essay to validate paragraph-removal ordering (currently only unit-tested).
 
 ## 9. Known limitations and technical debt
 - **Essay heading quality**: when a drafted body section's first sentence has no `[S#]` tag, `derive_heading_from_section` returns empty and the plan's placeholder title ("Angle N on <topic>") persists. The validator's `R_SPECIFIC_HEADINGS` flags this but no runtime remediation re-tries derivation. Both RUN3 live essays failed this rule.

@@ -8,30 +8,52 @@ Demo video: *(link added at submission)*
 
 ## 1. Architecture overview
 
-```
-┌───────────────┐   HTTP/JSON    ┌─────────────────────────┐
-│  React/Vite   │ ─────────────▶ │  FastAPI backend        │
-│  frontend     │ ◀───────────── │  (routers/, agent/,     │
-│  (chat, UI)   │                │   skills/, rag/)        │
-└──────┬────────┘                └──────┬──────────────────┘
-       │                                │
-       │ srcdoc, sandbox=""             │  SQLAlchemy
-       ▼                                ▼
-┌──────────────┐                 ┌──────────────────────┐
-│ Artifact     │                 │ PostgreSQL + pgvector│
-│ viewer       │                 │  (sessions, messages,│
-│ (iframe,     │                 │   docs, chunks)      │
-│  DOMPurify)  │                 └──────────────────────┘
-└──────────────┘                        ▲
-                                        │  REST
-                   ┌────────────────────┴────────────────────┐
-                   │   Ollama (host, native)                 │
-                   │   qwen2.5:7b   +   nomic-embed-text     │
-                   │   or  Anthropic API (optional, UNTESTED)│
-                   └─────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    U[User browser] -->|HTTP/JSON| FE[React + Vite<br/>frontend]
+    FE -->|/sessions/.../messages| API[FastAPI backend]
+    API --> ROUTER[Intent router<br/>QA / ESSAY / ARTIFACT]
+    ROUTER -->|retrieval first| RAG[Embed + pgvector<br/>cosine top-k]
+    RAG --> DB[(PostgreSQL<br/>+ pgvector<br/>302 docs<br/>21,994 chunks)]
+    ROUTER -->|one tool per intent| AGENT[Locked-down agent<br/>SDK built-ins disabled]
+    AGENT -->|REST| LLM[Ollama local<br/>qwen2.5:7b + nomic-embed-text]
+    AGENT -. optional .-> ANT[Anthropic API<br/>UNTESTED]
+    API --> VERIFY[Citation verifier<br/>maps every S# tag<br/>to DB rows]
+    API --> SKILL[Ship 30 skill<br/>plan → draft → expand → trim]
+    FE -->|srcdoc, sandbox=&quot;&quot;| VIEW[Artifact viewer<br/>DOMPurify + CSP]
 ```
 
 Request flow (chat):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant RAG as pgvector
+    participant LLM as Ollama/Anthropic
+    participant V as Verifier
+    U->>FE: types question
+    FE->>API: POST /sessions/{id}/messages
+    API->>API: classify intent (QA/ESSAY/ARTIFACT)
+    API->>RAG: embed query + cosine top-k
+    alt top_score < RETRIEVAL_MIN_SCORE
+        API-->>FE: 200 exact refusal (0 LLM calls)
+    else grounded follow-up (short + prior cited)
+        API->>RAG: merge prior cited chunks (bypass score gate)
+        API->>LLM: grounded prompt with [S1..Sn]
+        LLM-->>API: answer with [S#] tags
+        API->>V: validate every [S#] against DB
+        V-->>API: cleaned_text + citations
+        API-->>FE: 200 {content, citations, latency}
+    else normal grounded QA
+        API->>LLM: grounded prompt with [S1..Sn]
+        LLM-->>API: answer with [S#] tags
+        API->>V: validate tags; retry once if missing
+        API-->>FE: 200 {content, citations, latency}
+    end
+```
 
 1. Frontend POSTs the user message to `/sessions/{id}/messages`.
 2. **Deterministic intent router** classifies QA / ESSAY / ARTIFACT and picks a tool menu (one tool per intent).
@@ -91,10 +113,28 @@ OLLAMA_CONTEXT_LENGTH=8192 ollama serve &
 # 5. One-command bring-up: fetches transcripts, builds containers, waits for health, ingests
 make first-run
 
-# 6. Open the app
+# fetch_data.py is idempotent: if ./data/lennys-podcast-transcripts/episodes already
+# exists it is left untouched. Pass --force to re-clone:
+#   python scripts/fetch_data.py --force
+
+# 6. Open the app and check health
+curl http://localhost:8000/health
 #   Frontend: http://localhost:3000
 #   Backend API: http://localhost:8000
 #   API docs: http://localhost:8000/docs
+```
+
+Expected `/health` payload once ingestion has run:
+
+```json
+{
+  "status": "ok",
+  "ingested": true,
+  "database": {"connected": true, "vector_count": 21994, "ingested": true},
+  "provider": {"name": "ollama", "model": "qwen2.5:7b", "ok": true, "status": "ok", "reason": null},
+  "ollama": {"reachable": true, "llm_model_present": true, "embedding_model_present": true,
+             "llm_model": "qwen2.5:7b", "embedding_model": "nomic-embed-text"}
+}
 ```
 
 ### Windows (PowerShell)
@@ -305,6 +345,10 @@ Evaluation scripts (not run on every build; require ingestion + Ollama up):
 | Frontend shows "Network error" | `VITE_API_BASE_URL` points at the wrong port, or `BACKEND_PORT` changed after frontend build. | Rebuild the frontend after changing `.env` (`docker compose up -d --build frontend`). |
 | `503 db_unavailable` on every request | Postgres container not yet healthy. | Wait a few seconds, or `docker compose logs db`; `make first-run` already waits. |
 | Essays below the 1,100-word floor marked "Needs review" | Model drafted below floor and 2 expansion passes found no unused supported passages. | Expected behavior; see Known limitations. |
+| First essay or first chat is noticeably slower than later ones (~15 s extra) | Ollama loads the model and the embedding model lazily on the first call. | Expected on cold start; warm the model with `curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5:7b","prompt":"hi"}' > /dev/null` after `ollama serve`. |
+| First embed call returns `connection reset` once, then succeeds | Ollama's embedding worker starts on demand and the first socket can race. | The ingestion script retries; a single failure during warm-up is safe to ignore. |
+| Backend container exits with Alembic `ProgrammingError: relation ... does not exist` | Alembic migrations did not run on first startup (rare; entrypoint.sh is responsible). | `docker compose exec -T backend alembic upgrade head` then restart the backend. |
+| `/health` reports `vector_count=0` but ingestion seems to have finished | Ingestion was pointed at an empty `./data/` or a different `DATA_DIR`. | Confirm `./data/lennys-podcast-transcripts/episodes/` has files; re-run `make fetch-data && make ingest`. |
 
 ---
 
@@ -364,4 +408,4 @@ Taken from [docs/PRD.md §9](docs/PRD.md).
 
 ## 13. Data notice
 
-The podcast transcripts come from <https://github.com/ChatPRD/lennys-podcast-transcripts>, provided for personal and educational use per that repository. **This repository does not redistribute them.** `scripts/fetch_data.py` clones the upstream repo into `./data/` on first-run; `./data/` is gitignored. Please review the upstream repository's terms before use.
+The podcast transcripts come from <https://github.com/ChatPRD/lennys-podcast-transcripts>. The upstream repository states they are **"provided for personal and educational use"** by their original authors; it is the authoritative source for permitted use and attribution. **This repository does not redistribute the transcripts**: `./data/` is gitignored, nothing under `data/` is tracked (verified with `git ls-files .env data notes` empty), and `scripts/fetch_data.py` clones the upstream repo into `./data/lennys-podcast-transcripts/` on first run. Please review the upstream repository's README and attribution before using the data for anything beyond personal evaluation of this project.
