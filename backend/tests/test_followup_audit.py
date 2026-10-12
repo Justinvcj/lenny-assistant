@@ -17,6 +17,9 @@ import logging
 import uuid
 from typing import Any, Dict, List
 
+import socket
+import urllib.parse
+
 import pytest
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE, rewrite_query
 from app.config import get_settings
@@ -25,6 +28,29 @@ from app.rag.embeddings import get_embeddings_client
 from app.rag.retrieval import retrieve
 
 logger = logging.getLogger(__name__)
+
+
+def _ollama_reachable() -> bool:
+    """Return True iff the configured Ollama endpoint accepts a TCP connect.
+
+    These tests exercise the real embedding path end to end. Without Ollama they
+    cannot run; they are skipped (never falsely failed) when it is unreachable.
+    """
+    url = get_settings().ollama_base_url
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 11434
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _ollama_reachable(),
+    reason="Ollama is unreachable at the configured OLLAMA_BASE_URL",
+)
 
 
 AUDIT_SESSIONS: List[Dict[str, Any]] = [

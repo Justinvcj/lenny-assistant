@@ -567,6 +567,81 @@ RE_FACT_OR_ADVICE = re.compile(
 )
 
 
+def strip_unverified_quote_sentences(
+    text: str, sources: Sequence[Any]
+) -> Tuple[str, int]:
+    """Delete any sentence that contains an unverified direct quote (≥6 words).
+
+    Policy (STEP 2): an essay must never be stored with a direct quote that is
+    not an exact (normalized) substring of the cited chunks. Any such sentence
+    is DELETED outright. Short (<6-word) quoted spans are left alone.
+
+    The sentence splitter respects quote boundaries so a period INSIDE a
+    quoted span does not falsely terminate the sentence.
+
+    Returns ``(cleaned_text, deleted_sentence_count)``.
+    """
+    if not text or not sources:
+        return text, 0
+
+    normalized_sources: List[str] = []
+    for s in sources:
+        txt = s.get("text") or s.get("passage") if isinstance(s, dict) else getattr(s, "text", getattr(s, "passage", ""))
+        clean_txt = re.sub(r"[^\w\s]", " ", (txt or "").lower())
+        normalized_sources.append(" ".join(clean_txt.split()))
+    full_corpus = " ".join(normalized_sources)
+
+    quote_re = re.compile(r'["“]([^"”\n]{15,}?)["”]')
+
+    def _quote_is_fabricated(q: str) -> bool:
+        words = q.split()
+        if len(words) < 6:
+            return False
+        norm = " ".join(re.sub(r"[^\w\s]", " ", q.lower()).split())
+        return norm not in full_corpus
+
+    def _split_sentences_quote_aware(paragraph: str) -> List[str]:
+        """Split on sentence terminators that are not inside a quoted span."""
+        # Mark the ranges inside quotes so terminators inside them are ignored.
+        inside = [False] * len(paragraph)
+        for qm in quote_re.finditer(paragraph):
+            for i in range(qm.start(), qm.end()):
+                inside[i] = True
+        sentences: List[str] = []
+        buf: List[str] = []
+        for i, ch in enumerate(paragraph):
+            buf.append(ch)
+            if ch in ".!?" and not inside[i]:
+                sentences.append("".join(buf))
+                buf = []
+        if buf:
+            sentences.append("".join(buf))
+        return sentences
+
+    deleted = 0
+    new_paragraphs: List[str] = []
+    for para in text.split("\n\n"):
+        if '"' not in para and "“" not in para:
+            new_paragraphs.append(para)
+            continue
+        kept: List[str] = []
+        for sent in _split_sentences_quote_aware(para):
+            drop = False
+            for qm in quote_re.finditer(sent):
+                if _quote_is_fabricated(qm.group(1).strip()):
+                    drop = True
+                    break
+            if drop:
+                deleted += 1
+            else:
+                kept.append(sent)
+        rebuilt = "".join(kept).strip()
+        if rebuilt:
+            new_paragraphs.append(rebuilt)
+
+    return "\n\n".join(new_paragraphs).strip(), deleted
+
+
 def verify_direct_quotes(text: str, sources: Sequence[Any]) -> Tuple[str, int, int]:
     """Verify that 6+ word quotes in text appear verbatim in cited source passages.
 

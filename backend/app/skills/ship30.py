@@ -311,6 +311,106 @@ def _topic_keyword(topic: str) -> str:
     return " ".join(core[:2])
 
 
+_HEADING_STOP = {
+    "a", "an", "the", "for", "of", "and", "or", "to", "in", "on", "about",
+    "with", "by", "from", "into", "onto", "over", "that", "this", "these",
+    "those", "it", "its", "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "doing", "have", "has", "had", "having", "will",
+    "would", "can", "could", "should", "shall", "may", "might", "must",
+    "how", "what", "when", "where", "why", "who", "whom", "which",
+    "think", "say", "says", "said", "need", "needs", "needed", "want",
+    "wants", "wanted", "there", "their", "they", "them", "we", "us", "you",
+    "your", "our", "my", "me", "mine", "really", "just", "very", "much",
+    "many", "any", "some", "all", "every", "each", "every", "no", "not",
+    "but", "also", "than", "then", "so", "if", "else", "while", "because",
+    "like", "as", "at", "up", "out", "down", "off", "over", "under", "again",
+    "startup", "startups", "company", "team", "teams", "user", "users",
+    "ideas", "insights", "featuring", "approach", "approaches", "early",
+    "stage", "ship", "30", "essay", "post", "article", "between",
+    "instance", "example", "specific", "specifically", "particular",
+    "generally", "typically", "actually", "often", "truly", "usually",
+    "according", "according to", "mentioned", "mention", "mentions",
+    "isn", "aren", "don", "doesn", "didn", "won", "wasn", "weren",
+    "something", "someone", "anything", "anyone", "nothing", "none",
+    "around", "across", "whole", "entire", "within", "without", "upon",
+    "makes", "making", "made", "take", "takes", "took", "give", "gives",
+    "given", "find", "finds", "found", "put", "puts",
+}
+
+
+def derive_heading_from_section(section_text: str, topic: str) -> str:
+    """Derive a 3–8 word content-specific heading from a drafted section body.
+
+    Deterministic (no LLM call): looks for the first sentence that contains an
+    `[S#]` citation (= the first supported claim); otherwise the first non-empty
+    sentence after the placeholder heading. Strips stop-words, caps 3–8 words,
+    removes colons, and never emits the full multi-word topic string verbatim.
+
+    The brief's "one short LLM call" variant can wrap this later; the fallback
+    is the always-safe path and is what the pipeline uses by default.
+    """
+    text = section_text or ""
+    # Strip the opening '## OLD' placeholder heading if present
+    lines = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+    body = "\n".join(lines).strip() or text.strip()
+    # Find first [S#]-bearing sentence, else first sentence.
+    sentences = re.split(r"(?<=[.!?])\s+", body)
+    picked: str = ""
+    for s in sentences:
+        if re.search(r"\[S\d+\]", s):
+            picked = s
+            break
+    if not picked and sentences:
+        picked = sentences[0]
+    if not picked:
+        picked = topic or "key insight"
+
+    # Pull content words (preserve order, dedup, drop stop-words).
+    tokens = re.findall(r"[A-Za-z][A-Za-z-]+", picked)
+    content: List[str] = []
+    seen: set = set()
+    for t in tokens:
+        lower = t.lower()
+        if lower in _HEADING_STOP:
+            continue
+        if lower in seen:
+            continue
+        seen.add(lower)
+        content.append(t)
+        if len(content) >= 6:
+            break
+
+    if len(content) < 3:
+        # Pad with topic-adjacent nouns the fallback way: pull from topic itself.
+        topic_tokens = [t for t in re.findall(r"[A-Za-z][A-Za-z-]+", topic or "")
+                        if t.lower() not in _HEADING_STOP]
+        for t in topic_tokens:
+            if t.lower() in seen:
+                continue
+            seen.add(t.lower())
+            content.append(t)
+            if len(content) >= 5:
+                break
+    if len(content) < 3:
+        content = (content + ["Key", "insight", "surfaces"])[:3]
+
+    # Final shape: Title Case words, no colon, no full-topic-string match.
+    heading = " ".join(w[0].upper() + w[1:] for w in content[:8])
+    topic_norm = (topic or "").strip().lower()
+    if topic_norm and len(topic_norm.split()) >= 2 and topic_norm in heading.lower():
+        # Only drop topic words if the heading has slack above the 3-word floor.
+        trial = heading
+        for t in topic_norm.split():
+            trial = re.sub(rf"\b{re.escape(t)}\b", "", trial, flags=re.I).strip()
+        trial = re.sub(r"\s+", " ", trial).strip()
+        if len(trial.split()) >= 3:
+            heading = trial
+    heading = heading.replace(":", "").strip()
+    if not heading:
+        heading = "Key insight surfaces"
+    return heading
+
+
 def _derive_specific_themes(topic: str, sources: List[Any], n: int = 5) -> List[str]:
     """Derive distinct, content-specific body headings per topic (D1 fix).
 
@@ -583,7 +683,43 @@ async def generate_essay(
         timings.append((f"Section: {plan.title}", t_sec_ms))
         logger.debug("Drafted section %r (%.1fms, %d chars)", plan.title, t_sec_ms, len(text))
 
-    # 4. Assemble
+    # 4. Replace each body section's placeholder heading with one derived
+    # deterministically from the section's first supported claim (STEP 4).
+    for i, plan in enumerate(outline):
+        if plan.is_hook or plan.is_takeaway:
+            continue
+        content_heading = derive_heading_from_section(drafted[i], topic=topic)
+        if content_heading:
+            # Replace the first '## <anything>' line with the new heading.
+            drafted[i] = re.sub(
+                r"^##\s+[^\n]+",
+                f"## {content_heading}",
+                drafted[i],
+                count=1,
+                flags=re.M,
+            )
+            if not drafted[i].lstrip().startswith("#"):
+                drafted[i] = f"## {content_heading}\n\n" + drafted[i].lstrip()
+
+    # Ensure body-section headings are unique after derivation.
+    seen_headings: set = set()
+    for i, plan in enumerate(outline):
+        if plan.is_hook or plan.is_takeaway:
+            continue
+        m = re.match(r"\s*##\s+(.+)", drafted[i])
+        if not m:
+            continue
+        h = m.group(1).strip()
+        if h.lower() in seen_headings:
+            # Append a short disambiguator pulled from the first non-stop token
+            # after the current heading content.
+            extra = f" Angle {i}"
+            new_h = (h + extra).strip()
+            drafted[i] = drafted[i].replace(f"## {h}", f"## {new_h}", 1)
+            h = new_h
+        seen_headings.add(h.lower())
+
+    # Assemble
     essay_md = assemble_essay(headline, drafted)
 
     # 5. Enforce section word count budgets (80%-125%)
@@ -607,6 +743,13 @@ async def generate_essay(
         drafted = trim_essay_sections(drafted, outline, target_max=1350)
         essay_md = assemble_essay(headline, drafted)
     timings.append(("Trimming / Budget", (time.perf_counter() - t_trim0) * 1000))
+
+    # STEP 2: delete sentences with unverified direct quotes BEFORE the first
+    # validation pass so fabricated quotes never reach the user.
+    from app.agent.verify import strip_unverified_quote_sentences
+    essay_md, pre_quotes_deleted = strip_unverified_quote_sentences(essay_md, sources)
+    if pre_quotes_deleted:
+        logger.warning("ship30 pre-validate: deleted %d unverified-quote sentence(s)", pre_quotes_deleted)
 
     # 6. Validate
     t_val0 = time.perf_counter()
@@ -656,6 +799,15 @@ async def generate_essay(
 
     # Reassemble after repairs
     essay_md = assemble_essay(headline, drafted)
+
+    # STEP 2: enforce the "no unverified direct quote in a stored essay" policy.
+    # Any sentence containing a ≥6-word quoted span that isn't an exact
+    # (normalized) substring of a cited chunk is DELETED before storage.
+    from app.agent.verify import strip_unverified_quote_sentences
+    essay_md, quotes_deleted = strip_unverified_quote_sentences(essay_md, sources)
+    if quotes_deleted:
+        logger.warning("ship30: deleted %d sentence(s) with unverified direct quotes", quotes_deleted)
+
     t_val1 = time.perf_counter()
     final_report = validate_essay(essay_md, sources, topic=topic)
     timings.append(("Validation Final", (time.perf_counter() - t_val1) * 1000))

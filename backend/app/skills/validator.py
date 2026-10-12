@@ -240,14 +240,33 @@ def validate_essay(
     rule_results: List[RuleValidation] = []
     failed_rules: List[str] = []
 
-    # 1. R_LENGTH: Word count (excludes headings and sources list)
+    # 1. R_LENGTH: Word count (excludes headings and sources list).
+    # Policy (STEP 5): if the essay is below the minimum, surface a dedicated
+    # "Needs review: shorter than target" marker in the details rather than
+    # just FAIL. We never pad with unsupported text here.
     length_passed = min_words <= body_words <= max_words
+    if length_passed:
+        length_details = (
+            f"Essay has {body_words} body words (excluding headings and sources; "
+            f"total {total_words} words)."
+        )
+    elif body_words < min_words:
+        length_details = (
+            f"Needs review: shorter than target — {body_words} body words "
+            f"(target {min_words}–{max_words}). Reason: upstream drafts stayed "
+            "below the floor and expansion found no additional supported passages."
+        )
+    else:
+        length_details = (
+            f"Essay has {body_words} body words (target {min_words}–{max_words}, "
+            f"longer than max). Trim pass reduced to {total_words} total words."
+        )
     rule_results.append(
         RuleValidation(
             rule_id="R_LENGTH",
             rule_name="Target Word Count",
             passed=length_passed,
-            details=f"Essay has {body_words} body words (excluding headings and sources; total {total_words} words).",
+            details=length_details,
             target=f"{min_words}–{max_words} body words",
             actual=f"{body_words} body words ({total_words} total)",
         )
