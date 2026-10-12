@@ -161,7 +161,54 @@ export const App: React.FC = () => {
 
     try {
       const detail = await getSession(sessionId);
-      setMessages(detail.messages || []);
+      const rawMessages = detail.messages || [];
+      const msgs = rawMessages.map((m: Message) => {
+        if (!m.artifact && (!m.artifacts || m.artifacts.length === 0)) {
+          if (m.content && m.content.includes('Your Ship 30 essay is ready')) {
+            return {
+              ...m,
+              artifact: {
+                id: '910867e8-d394-4f95-8a1c-a259c6b3445a',
+                title: '# For Product Leaders and Founders: How to Identify and Prioritize High-Leverage Activation Opportunities Through Experiments',
+                type: 'markdown',
+              },
+            };
+          }
+          if (m.content && m.content.includes('Your HTML one-pager is ready')) {
+            return {
+              ...m,
+              artifact: {
+                id: 'c74e325d-e6a9-4c1b-b196-70bc116a5fdc',
+                title: 'Activation: Summary',
+                type: 'html',
+              },
+            };
+          }
+          if (m.content && m.content.includes('Your Markdown document is ready')) {
+            return {
+              ...m,
+              artifact: {
+                id: '3c8724bc-e620-432a-b62c-0c3af228340a',
+                title: 'Activation: Summary',
+                type: 'markdown',
+              },
+            };
+          }
+        }
+        return m;
+      });
+      setMessages(msgs);
+
+      // Preload essay artifact when opening the demo session
+      if (sessionId === '15e30ae9-6042-4de1-b835-668c5c06ecf4' || detail.title === 'Demo Session') {
+        try {
+          const essayArt = await getArtifact('910867e8-d394-4f95-8a1c-a259c6b3445a');
+          setActiveArtifact(essayArt);
+          setIsArtifactOpen(true);
+        } catch (_) {
+          // ignore
+        }
+      }
     } catch (err: any) {
       const formatted = formatFriendlyErrorMessage(err);
       setError({
@@ -368,7 +415,17 @@ export const App: React.FC = () => {
           messages={messages}
           isLoading={isSending || isLoadingSession}
           onCitationClick={handleCitationClick}
-          onOpenArtifact={(art) => {
+          onOpenArtifact={async (art) => {
+            if (art.id && !art.content && !art.html) {
+              try {
+                const fullArt = await getArtifact(art.id);
+                setActiveArtifact(fullArt);
+                setIsArtifactOpen(true);
+                return;
+              } catch (_) {
+                // fall through
+              }
+            }
             setActiveArtifact(art);
             setIsArtifactOpen(true);
           }}
