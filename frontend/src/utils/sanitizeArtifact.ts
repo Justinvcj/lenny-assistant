@@ -80,13 +80,24 @@ export function sanitizeHtml(rawHtml: string): string {
   return inert;
 }
 
+export function escapeHtml(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function wrapHtmlDocument(title: string, sanitizedHtml: string): string {
+  const safeTitle = escapeHtml(title || 'Generated Artifact');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   ${CSP_META_TAG}
-  <title>${title || 'Generated Artifact'}</title>
+  <title>${safeTitle}</title>
 </head>
 <body>
 ${sanitizedHtml}

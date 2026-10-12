@@ -202,8 +202,9 @@ def rewrite_query(
 ) -> str:
     """Rewrite elliptical or pronoun-heavy follow-up questions into standalone queries.
 
-    Uses conversation history to locate the prior user question and combine them
-    for accurate dense semantic retrieval.
+    Uses conversation history to locate the prior user question and contextualize
+    with cited guest names, episode titles, and assistant answer snippets for
+    accurate dense semantic retrieval.
     """
     clean_msg = current_message.strip()
     if not clean_msg or not history:
@@ -211,6 +212,14 @@ def rewrite_query(
 
     if is_standalone_query(clean_msg):
         return clean_msg
+
+    # 1. Identify the immediately preceding assistant message (if any)
+    last_assistant: Optional[Any] = None
+    for msg in reversed(history):
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        if role and role.lower() == "assistant":
+            last_assistant = msg
+            break
 
     # Locate the most recent prior user query
     prior_user_query: Optional[str] = None
@@ -225,8 +234,92 @@ def rewrite_query(
     if not prior_user_query:
         return clean_msg
 
-    # Combine prior user query and current message
-    if prior_user_query[-1] in ("?", "!", "."):
-        return f"{prior_user_query} {clean_msg}"
+    # 2. Walk back to find the root/standalone user question establishing the topic
+    topic_user_query = prior_user_query
+    if not is_standalone_query(prior_user_query):
+        for msg in reversed(history):
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            if role and role.lower() == "user":
+                content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+                if content and content.strip() and is_standalone_query(content.strip()):
+                    topic_user_query = content.strip()
+                    break
+
+    # 3. Maintain immediate refusal when immediately preceded by out-of-domain refusal
+    if last_assistant:
+        asst_content = (
+            last_assistant.get("content")
+            if isinstance(last_assistant, dict)
+            else getattr(last_assistant, "content", "")
+        )
+        if asst_content == EXACT_REFUSAL_MESSAGE or (
+            asst_content and asst_content.startswith("I don't have information about that in the transcripts.")
+        ):
+            return topic_user_query
+
+    # 4. Extract citations context and assistant snippet from preceding assistant answer
+    citations_data: list[Any] = []
+    asst_text: str = ""
+    if last_assistant:
+        asst_text = (
+            last_assistant.get("content")
+            if isinstance(last_assistant, dict)
+            else getattr(last_assistant, "content", "")
+        )
+        cits = (
+            last_assistant.get("citations")
+            if isinstance(last_assistant, dict)
+            else getattr(last_assistant, "citations", [])
+        )
+        if cits:
+            citations_data = list(cits)
+
+    # If immediate assistant lacked citations, check earlier assistant messages
+    if not citations_data:
+        for msg in reversed(history):
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            if role and role.lower() == "assistant":
+                cits = (
+                    msg.get("citations")
+                    if isinstance(msg, dict)
+                    else getattr(msg, "citations", [])
+                )
+                if cits:
+                    citations_data = list(cits)
+                    break
+
+    # 5. Format rewritten query
+    # When cited sources exist, construct enhanced contextual follow-up query
+    if citations_data:
+        cited_entities: list[str] = []
+        for c in citations_data:
+            g = c.get("guest") if isinstance(c, dict) else getattr(c, "guest", None)
+            t = c.get("title") if isinstance(c, dict) else getattr(c, "title", None)
+            if g and g not in cited_entities and g not in ("Unknown", "None"):
+                cited_entities.append(str(g))
+            if t and t not in cited_entities and t not in ("Podcast Episode", "None"):
+                cited_entities.append(str(t))
+
+        asst_snippet = ""
+        if asst_text and asst_text != EXACT_REFUSAL_MESSAGE:
+            clean_asst = re.sub(r"\[S\d+\]", "", asst_text)
+            clean_asst = re.sub(r"#+\s*", "", clean_asst)
+            clean_asst = re.sub(r"[*`_]", "", clean_asst)
+            clean_asst = " ".join(clean_asst.split())
+            if clean_asst:
+                asst_snippet = clean_asst[:200].strip()
+
+        parts: list[str] = [topic_user_query]
+        if cited_entities:
+            parts.append(", ".join(cited_entities))
+        if asst_snippet:
+            parts.append(asst_snippet)
+        parts.append(clean_msg)
+        return " -- ".join(parts)
+
+    # Fallback to simple concatenation for history without citations
+    if topic_user_query[-1] in ("?", "!", "."):
+        return f"{topic_user_query} {clean_msg}"
     else:
-        return f"{prior_user_query}. {clean_msg}"
+        return f"{topic_user_query}. {clean_msg}"
+

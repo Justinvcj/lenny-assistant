@@ -52,13 +52,13 @@ I can't see Antigravity's current model choices or quotas. If it lets you pick a
 
 ## Saving agent transcripts (deliverable #6)
 - Create `transcripts/` in the repo.
-- **Claude Code:** sessions are saved locally as JSONL under your user folder, `C:\Users\Justin\.claude\projects\...` (the path appeared in your SDK output as `memory_paths`). Copy the relevant `.jsonl` files into `transcripts/claude-code/`. Your spike sessions are already there, including the failed run — keep them.
+- **Claude Code:** sessions are saved locally as JSONL under your user folder, `<user folder>\.claude\projects\...` (the path appeared in your SDK output as `memory_paths`). Copy the relevant `.jsonl` files into `transcripts/claude-code/`. Your spike sessions are already there, including the failed run — keep them.
 - **Antigravity:** export or copy each conversation into `transcripts/antigravity/P#-name.md` (copy-paste the chat if there's no export; screenshots as a last resort). I can't verify its export feature from here.
 - Also keep `spike/SPIKE_LOG.md`.
 - Before committing: search the files for `key`, `token`, `password`, your Windows username in paths if you want it hidden, and remove. The dummy `ollama` token is fine.
 
 ## Phase 0 — do this first (20 minutes, by hand)
-1. Unzip the kit and copy its contents into `C:\Users\Justin\The Global Projects Folder\lenny-assistant\` (so `SPEC.md`, `CLAUDE.md`, `AGENTS.md`, `docs\`, `playbook\` sit next to `spike\`).
+1. Unzip the kit and copy its contents into `<project folder>\` (so `SPEC.md`, `CLAUDE.md`, `AGENTS.md`, `docs\`, `playbook\` sit next to `spike\`).
 2. Make sure `.gitignore` in the repo root contains:
    ```
    .venv/

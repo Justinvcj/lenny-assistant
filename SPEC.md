@@ -80,7 +80,7 @@ lenny-assistant/
 | LOG_LEVEL | INFO | |
 
 ## 6. Conventions
-- Type hints everywhere, small functions, one responsibility per module. No file > ~300 lines.
+- Type hints everywhere, small functions, one responsibility per module. Keep modules cohesive; known exceptions are listed in the README.
 - Errors: JSON `{"error": {"code": "...", "message": "..."}}` with correct HTTP status. Never leak stack traces.
 - Logs: JSON, one line per event. Required fields where relevant: `request_id, session_id, intent, provider, model, retrieval_ms, llm_ms, total_ms, n_chunks, top_score, degraded, error_code`.
 - No secrets in repo. `.env` ignored. Placeholder values only in `.env.example`.

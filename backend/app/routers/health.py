@@ -37,7 +37,9 @@ async def health_check(response: Response) -> Dict[str, Any]:
         logger.warning(f"Database health check failed: {exc}")
         db_ok = False
 
-    # 2. Ollama check (if provider is ollama)
+    provider_reason = None
+
+    # 2. Provider check
     if settings.llm_provider == "ollama":
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -48,28 +50,54 @@ async def health_check(response: Response) -> Dict[str, Any]:
                     # Check without tag suffix or with exact match
                     llm_model_present = any(settings.llm_model in m for m in models)
                     embedding_model_present = any(settings.embedding_model in m for m in models)
+                else:
+                    ollama_ok = False
+                    provider_reason = "ollama_unreachable"
         except Exception as exc:
             logger.warning(f"Ollama health check failed: {exc}")
             ollama_ok = False
-    else:
-        # Non-ollama provider (e.g. anthropic)
-        ollama_ok = True
-        llm_model_present = bool(settings.anthropic_api_key)
+            provider_reason = "ollama_unreachable"
+    elif settings.llm_provider == "anthropic":
         embedding_model_present = True
+        try:
+            from app.llm.factory import get_provider
+
+            provider = get_provider("anthropic")
+            p_health = await provider.health()
+            if p_health.ok:
+                ollama_ok = True
+                llm_model_present = True
+            else:
+                ollama_ok = False
+                llm_model_present = False
+                provider_reason = p_health.error or "anthropic_degraded"
+        except Exception as exc:
+            logger.warning(f"Anthropic health check failed: {exc}")
+            ollama_ok = False
+            llm_model_present = False
+            provider_reason = str(exc)
+    else:
+        ollama_ok = False
+        llm_model_present = False
+        embedding_model_present = False
+        provider_reason = f"unknown_provider_{settings.llm_provider}"
 
     # Status determination:
     # HTTP 503 ONLY if the database is down per SPEC / P1
     if not db_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         overall_status = "degraded"
+        reason_val = "database_down"
     elif not ollama_ok or not llm_model_present or not embedding_model_present:
         overall_status = "degraded"
+        reason_val = provider_reason or "model_unavailable"
     else:
         overall_status = "ok"
+        reason_val = None
 
     is_ingested = bool(vector_count > 0)
 
-    return {
+    payload: Dict[str, Any] = {
         "status": overall_status,
         "ingested": is_ingested,
         "database": {
@@ -77,14 +105,26 @@ async def health_check(response: Response) -> Dict[str, Any]:
             "vector_count": vector_count,
             "ingested": is_ingested,
         },
+        "provider": {
+            "name": settings.llm_provider,
+            "model": settings.llm_model,
+            "ok": (overall_status == "ok"),
+            "status": overall_status,
+            "reason": reason_val,
+        },
         "ollama": {
             "reachable": ollama_ok,
             "llm_model_present": llm_model_present,
             "embedding_model_present": embedding_model_present,
             "llm_model": settings.llm_model,
             "embedding_model": settings.embedding_model,
+            "reason": reason_val,
         },
     }
+    if reason_val:
+        payload["reason"] = reason_val
+
+    return payload
 
 
 @router.get("/config")

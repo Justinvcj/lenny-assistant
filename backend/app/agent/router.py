@@ -55,11 +55,11 @@ RE_ESSAY_TRANSFORM = re.compile(
 
 # 3. ARTIFACT triggers
 RE_HTML_PAGE = re.compile(
-    r"\b(?:html(?:\s+page|\s+file|\s+doc|\s+one-?pager)?|one-?pager|landing\s+page|web\s*page)\b",
+    r"\b(?:(?:export|save|download|output|render)\s+(?:as\s+|to\s+|this\s+as\s+)?html\b|html(?:\s+page|\s+file|\s+doc|\s+one-?pager)?|one-?pager|landing\s+page|web\s*page)\b",
     re.IGNORECASE,
 )
 RE_MARKDOWN_DOC = re.compile(
-    r"\bmarkdown\s+(?:doc|document|file)\b|\bmake\s+(?:a|an)\s+(?:page|document|one-?pager)\b|\bcreate\s+(?:a|an)\s+(?:page|document|one-?pager)\b",
+    r"\b(?:export|save|download|output|render)\s+(?:as\s+|to\s+|this\s+as\s+)?markdown\b|\bmarkdown\s+(?:doc|document|file)\b|\bmake\s+(?:a|an)\s+(?:page|document|one-?pager)\b|\bcreate\s+(?:a|an)\s+(?:page|document|one-?pager)\b",
     re.IGNORECASE,
 )
 RE_TABLE = re.compile(

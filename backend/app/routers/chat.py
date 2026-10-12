@@ -18,9 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent.orchestrator import run_agent
-from app.agent.prompts import EXACT_REFUSAL_MESSAGE, build_system_prompt, rewrite_query
+from app.agent.prompts import (
+    EXACT_REFUSAL_MESSAGE,
+    build_system_prompt,
+    is_standalone_query,
+    rewrite_query,
+)
 from app.agent.router import Intent, classify_intent
-from app.agent.tools import normalize_artifact_type
 from app.agent.verify import (
     extract_citation_tags,
     normalize_citations,
@@ -182,33 +186,159 @@ def is_summary_artifact_request(text: str) -> bool:
     cleaned = text.lower()
     return bool(
         re.search(
-            r"\b(one-?pager|summariz|summary|takeaways|notes|doc summarizing|that into|this into|format as)\b",
+            r"\b(one-?pager|summariz\w*|summary|takeaways|notes|doc summarizing|that into|this into|format as|export\w*|download\w*|output\w*|render\w*|save\w*)\b",
             cleaned,
         )
     )
 
 
+def is_command_string(text: str) -> bool:
+    """Check if the text is a command instruction rather than a topical question."""
+    cleaned = text.strip()
+    if is_summary_artifact_request(cleaned):
+        return True
+    if classify_intent(cleaned) != Intent.QA:
+        return True
+    if re.search(
+        r"^(?:(?:please|can you|could you)\s+)?(?:make|create|write|draft|generate|turn|format|convert|transform|build|summarize|export|download|output|render|save)\b",
+        cleaned,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def find_last_grounded_qa_exchange(
+    history: Sequence[Any],
+) -> tuple[Optional[Any], Optional[Any]]:
+    """Walk backward through history to find the last grounded QA exchange.
+
+    Returns (grounded_user_msg, grounded_assistant_msg).
+    Skips intermediate ARTIFACT and ESSAY user turns and assistant confirmation
+    messages/refusals/clarifications to locate the substantive grounded QA turn.
+    """
+    if not history:
+        return None, None
+
+    for i in range(len(history) - 1, -1, -1):
+        msg = history[i]
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        if role != "assistant":
+            continue
+
+        content = (msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")) or ""
+        citations = (msg.get("citations") if isinstance(msg, dict) else getattr(msg, "citations", [])) or []
+        intent_val = msg.get("intent") if isinstance(msg, dict) else getattr(msg, "intent", None)
+
+        # Skip refusals
+        if content == EXACT_REFUSAL_MESSAGE or content.startswith(
+            "I don't have information about that in the transcripts."
+        ):
+            continue
+        # Skip clarifications
+        if content.startswith("What topic would you like"):
+            continue
+        # Skip assistant artifact / essay confirmation messages
+        if intent_val and str(intent_val).upper() in ("ARTIFACT", "ESSAY"):
+            continue
+        if content.startswith("Your ") and (
+            "is ready:" in content or "essay is ready" in content or "one-pager is ready" in content
+        ):
+            continue
+        # Must have citations to be grounded QA
+        if not citations:
+            continue
+
+        # Found candidate grounded assistant message; find the user query that prompted it
+        created_at = msg.get("created_at") if isinstance(msg, dict) else getattr(msg, "created_at", None)
+        for j in range(i - 1, -1, -1):
+            prev_m = history[j]
+            prev_role = prev_m.get("role") if isinstance(prev_m, dict) else getattr(prev_m, "role", None)
+            prev_time = prev_m.get("created_at") if isinstance(prev_m, dict) else getattr(prev_m, "created_at", None)
+            if prev_role == "user" and (created_at is None or prev_time is None or prev_time < created_at):
+                u_content = (
+                    prev_m.get("content") if isinstance(prev_m, dict) else getattr(prev_m, "content", "")
+                ) or ""
+                # Verify user message is not an artifact or essay command
+                if not is_command_string(u_content) and classify_intent(u_content) == Intent.QA:
+                    # If user query is elliptical (e.g. 'Why is that?'), walk back to root question
+                    if not is_standalone_query(u_content):
+                        for k in range(j - 1, -1, -1):
+                            root_m = history[k]
+                            r_role = root_m.get("role") if isinstance(root_m, dict) else getattr(root_m, "role", None)
+                            if r_role == "user":
+                                r_content = (
+                                    root_m.get("content") if isinstance(root_m, dict) else getattr(root_m, "content", "")
+                                ) or ""
+                                if (
+                                    is_standalone_query(r_content)
+                                    and not is_command_string(r_content)
+                                    and classify_intent(r_content) == Intent.QA
+                                ):
+                                    return root_m, msg
+                    return prev_m, msg
+
+    return None, None
+
+
 def derive_summary_title(prev_user_text: Optional[str], prev_assistant_text: str) -> str:
-    """Derive an informative H1 title for summary artifacts."""
-    if prev_user_text:
+    """Derive an informative H1 title for summary artifacts.
+
+    Rejects command strings (e.g. artifact/essay generation instructions) and
+    extracts the topic from the grounded user question or headings in the assistant text.
+    """
+    if prev_user_text and not is_command_string(prev_user_text):
         cleaned = prev_user_text.strip()
+        for _ in range(2):
+            cleaned = re.sub(
+                r"^(?:what|how|why|who|can you|could you|tell me|explain|describe)\s+(?:did|does|do|is|are|about|to)?\s*",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            ).strip()
         cleaned = re.sub(
-            r"^(?:what|how|why|who|can you|tell me|explain|describe)\s+(?:did|does|do|is|are|about)?\s*",
+            r"^(?:(?:lenny|guests?|people)\s+)?(?:say|think|recommend|discuss|mention)\s+(?:about\s+)?",
             "",
             cleaned,
             flags=re.IGNORECASE,
         )
-        cleaned = re.sub(r"^(?:say|think|recommend)\s+about\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"^(?:do\s+you\s+know\s+(?:when|if)\s+you\s+have|to\s+know\s+(?:when|if)\s+you\s+have|how\s+to\s+know\s+(?:when|if)\s+you\s+have)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         cleaned = cleaned.rstrip("?.,!").strip()
-        if len(cleaned) > 3:
+        if (
+            len(cleaned) > 3
+            and cleaned.lower() not in ("that", "this", "it", "explain that more", "explain that", "more")
+        ):
             return f"{cleaned[:70].title()}: Summary"
+
     for line in prev_assistant_text.splitlines():
         line = line.strip()
         if line.startswith("#"):
-            h = line.lstrip("#").strip()
-            if len(h) > 3:
+            h = line.lstrip("#").strip().strip("*_`# ")
+            if len(h) > 3 and not h.lower().startswith("sources") and not h.lower().startswith("checks"):
                 return h[:70]
+
     return "Key Growth Insights: Executive Summary"
+
+
+
+def clean_html_asterisks(html_str: str) -> str:
+    """Ensure zero literal ** leak outside code/pre/style tags in HTML."""
+    parts = re.split(
+        r"(<code[^>]*>.*?</code>|<pre[^>]*>.*?</pre>|<style[^>]*>.*?</style>)",
+        html_str,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for i in range(0, len(parts), 2):
+        # Convert paired **text** to <strong>text</strong>
+        parts[i] = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", parts[i])
+        # Strip any remaining orphan **
+        parts[i] = parts[i].replace("**", "")
+    return "".join(parts)
 
 
 def generate_deterministic_html_summary(
@@ -233,12 +363,15 @@ def generate_deterministic_html_summary(
     if sources_heading_idx != -1:
         clean_md = clean_md[:sources_heading_idx].strip()
 
-    def replace_cit_token(match):
-        num = match.group(1)
-        return f"CITATOKEN_{num}_END"
+    def replace_cit_bracket(match: re.Match) -> str:
+        nums = re.findall(r"\d+", match.group(0))
+        return "".join(f"CITATOKEN_{n}_END" for n in nums)
 
-    protected_md = re.sub(r"\[S(\d+)\]", replace_cit_token, clean_md)
-    protected_md = re.sub(r"\([S](\d+)\)", replace_cit_token, protected_md)
+    # Tokenize single and grouped citation brackets like [S1], [S1, S2, S5], [s1], (S1), ([S1, S2])
+    protected_md = re.sub(r"\[\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]", replace_cit_bracket, clean_md)
+    protected_md = re.sub(r"\(\s*\[?\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]?\s*\)", replace_cit_bracket, protected_md)
+    protected_md = re.sub(r"\[[sS](\d+)\]", r"CITATOKEN_\1_END", protected_md)
+    protected_md = re.sub(r"\([sS](\d+)\)", r"CITATOKEN_\1_END", protected_md)
 
     md = MarkdownIt("commonmark", {"html": False})
     rendered_html = md.render(protected_md)
@@ -249,13 +382,45 @@ def generate_deterministic_html_summary(
 
     rendered_html = re.sub(r"CITATOKEN_(\d+)_END", restore_cit_token, rendered_html)
 
+    # Safety pass: Ensure zero raw [S..] tags remain anywhere in rendered_html
+    def restore_stray_cit(match: re.Match) -> str:
+        nums = re.findall(r"\d+", match.group(0))
+        return "".join(f'<sup><a href="#source-S{n}">[{n}]</a></sup>' for n in nums)
+
+    rendered_html = re.sub(r"\[\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]", restore_stray_cit, rendered_html)
+    rendered_html = re.sub(r"\(\s*\[?\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]?\s*\)", restore_stray_cit, rendered_html)
+
+    def _cit_num(c: Any) -> int:
+        val = _citation_val(c, "n", 0)
+        if isinstance(val, int):
+            return val
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            m = re.search(r"\d+", str(val))
+            return int(m.group(0)) if m else 0
+
+    sorted_citations = sorted(citations, key=_cit_num)
+
     sources_html_items = []
-    for cit in citations:
-        num = _citation_val(cit, "n", "1")
+    for cit in sorted_citations:
+        num = _cit_num(cit) or 1
         guest = _citation_val(cit, "guest")
         ep_title = _citation_val(cit, "title", "Podcast Episode")
         passage = _citation_val(cit, "passage", "")
-        passage_snippet = passage[:140].replace("<", "&lt;").replace(">", "&gt;") if passage else ""
+        passage_snippet = ""
+        if passage:
+            # Clean raw passage text sliced into passage[:140] to strip/convert markdown formatting
+            p_slice = passage[:140]
+            p_clean = (
+                p_slice.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            p_clean = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", p_clean)
+            p_clean = p_clean.replace("**", "")
+            passage_snippet = p_clean
+
         if guest:
             guest_str = f"<strong>{guest}</strong> &mdash; "
         else:
@@ -268,13 +433,19 @@ def generate_deterministic_html_summary(
     sources_block = ""
     if sources_html_items:
         sources_block = (
-            f'<h2 id="sources">Sources</h2>\n'
-            f'<ol class="sources-list">\n'
+            '<h2 id="sources">Sources</h2>\n'
+            '<ol class="sources-list">\n'
             + "\n".join(f"  {item}" for item in sources_html_items)
             + "\n</ol>\n"
         )
 
-    safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
+    safe_title = (
+        title.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
 
     html_page = (
         "<!DOCTYPE html>\n"
@@ -342,7 +513,7 @@ def generate_deterministic_html_summary(
         "</body>\n"
         "</html>"
     )
-    return html_page
+    return clean_html_asterisks(html_page)
 
 
 def generate_deterministic_markdown_summary(
@@ -365,15 +536,36 @@ def generate_deterministic_markdown_summary(
     if sources_heading_idx != -1:
         clean_md = clean_md[:sources_heading_idx].strip()
 
+    def replace_md_citation(match: re.Match) -> str:
+        nums = re.findall(r"\d+", match.group(0))
+        return "".join(f"[{n}](#source-S{n})" for n in nums)
+
+    clean_md = re.sub(r"\[\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]", replace_md_citation, clean_md)
+    clean_md = re.sub(r"\(\s*\[?\s*[sS]\d+(?:\s*[,;\s]+\s*(?:[sS]\s*)?\d+)*\s*\]?\s*\)", replace_md_citation, clean_md)
+    clean_md = re.sub(r"\[[sS](\d+)\]", r"[\1](#source-S\1)", clean_md)
+    clean_md = re.sub(r"\([sS](\d+)\)", r"[\1](#source-S\1)", clean_md)
+
+    def _cit_num(c: Any) -> int:
+        val = _citation_val(c, "n", 0)
+        if isinstance(val, int):
+            return val
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            m = re.search(r"\d+", str(val))
+            return int(m.group(0)) if m else 0
+
+    sorted_citations = sorted(citations, key=_cit_num)
+
     sources_items = []
-    for cit in citations:
-        num = _citation_val(cit, "n", "1")
+    for cit in sorted_citations:
+        num = _cit_num(cit) or 1
         guest = _citation_val(cit, "guest")
         ep_title = _citation_val(cit, "title", "Podcast Episode")
         if guest:
-            sources_items.append(f"{num}. [S{num}] **{guest}** &mdash; {ep_title}")
+            sources_items.append(f"{num}. **{guest}** &mdash; {ep_title}")
         else:
-            sources_items.append(f"{num}. [S{num}] {ep_title}")
+            sources_items.append(f"{num}. {ep_title}")
 
     sources_block = ""
     if sources_items:
@@ -410,6 +602,13 @@ async def post_message(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
+    if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
+        raise AppException(
+            code="bad_gateway",
+            message="Anthropic API key is not configured. Please set ANTHROPIC_API_KEY in environment.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+
     # 2. Persist user message
     user_msg = Message(
         id=uuid.uuid4(),
@@ -434,6 +633,9 @@ async def post_message(
 
     # 4. Classify intent
     intent = classify_intent(body.content, history=history_messages)
+
+    # Identify previous grounded QA exchange (walk back past ARTIFACT/ESSAY turns and refusals)
+    grounded_user, grounded_assistant = find_last_grounded_qa_exchange(history_messages)
 
     # Identify previous assistant response (strictly most recent by created_at)
     prev_assistant = next(
@@ -513,10 +715,12 @@ async def post_message(
             sources = [c for c in raw_chunks if c.score >= threshold]
             resolved_topic = explicit_topic
 
-        elif prev_assistant:
-            # (2) Pure reference -> reuse previous assistant's cited chunks + fresh query
-            cited_sources = await _load_sources_from_citations(prev_assistant.citations, db=db)
-            prior_query = prev_user.content if prev_user else body.content
+        elif grounded_assistant or prev_assistant:
+            target_assistant = grounded_assistant or prev_assistant
+            target_user = grounded_user or prev_user
+            # (2) Pure reference -> reuse grounded assistant's cited chunks + fresh query
+            cited_sources = await _load_sources_from_citations(target_assistant.citations, db=db)
+            prior_query = target_user.content if target_user else body.content
             fresh_chunks = await retrieve(
                 query=prior_query,
                 db=db,
@@ -531,7 +735,7 @@ async def post_message(
                 if fc.chunk_id not in seen_ids:
                     sources.append(fc)
                     seen_ids.add(fc.chunk_id)
-            resolved_topic = prev_user.content if prev_user else "key takeaways"
+            resolved_topic = target_user.content if target_user else "key takeaways"
 
         else:
             # (3) Neither explicit topic nor previous assistant answer -> prompt for topic (0 LLM calls)
@@ -658,28 +862,34 @@ async def post_message(
     elif intent == Intent.ARTIFACT:
         t_deriv_start = time.perf_counter()
         target_type = derive_artifact_type_from_prompt(body.content)
-        base_text = prev_assistant.content if prev_assistant else ""
-        citations_list = prev_assistant.citations if prev_assistant else []
+        target_assistant = grounded_assistant or prev_assistant
+        target_user = grounded_user or prev_user
+        base_text = target_assistant.content if target_assistant else ""
+        citations_list = target_assistant.citations if target_assistant else []
 
-        if prev_assistant:
+        if target_assistant:
             art_stmt = (
                 select(Artifact)
                 .where(Artifact.session_id == session_id)
-                .where(Artifact.type == "markdown")
                 .order_by(Artifact.created_at.desc())
                 .limit(1)
             )
             art_res = await db.execute(art_stmt)
             latest_art = art_res.scalar_one_or_none()
             if latest_art and latest_art.content:
-                if (
-                    prev_assistant.content.startswith("Your Ship 30 essay is ready")
-                    or prev_assistant.content.startswith("Your ")
-                    or len(latest_art.content) > len(prev_assistant.content)
-                ):
-                    base_text = latest_art.content
+                # If substantive markdown artifact exists (e.g. Ship 30 essay), prefer its content
+                # over confirmation strings or short text, but avoid using HTML content as base_text
+                if latest_art.type == "markdown" and not latest_art.content.startswith("<"):
+                    if (
+                        target_assistant.content.startswith("Your Ship 30 essay is ready")
+                        or target_assistant.content.startswith("Your ")
+                        or len(latest_art.content) > len(target_assistant.content)
+                    ):
+                        base_text = latest_art.content
 
-        art_title = derive_summary_title(prev_user.content if prev_user else None, base_text or resolved_topic)
+        # Derive title from original grounded user question, never from command text
+        title_user_text = target_user.content if target_user else None
+        art_title = derive_summary_title(title_user_text, base_text or resolved_topic)
         t_deriv_ms = (time.perf_counter() - t_deriv_start) * 1000
 
         # Standalone artifact requested with explicit topic and no prior assistant text
@@ -770,6 +980,46 @@ async def post_message(
         )
 
     else:
+        # Check if preceding assistant turn was a refusal and this is an elliptical follow-up
+        if (
+            history_messages
+            and history_messages[-1].role == "assistant"
+            and history_messages[-1].content == EXACT_REFUSAL_MESSAGE
+            and not is_standalone_query(body.content)
+        ):
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            logger.info("Immediate refusal: follow-up to out-of-domain refusal without LLM call")
+            assistant_msg = Message(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                role="assistant",
+                content=EXACT_REFUSAL_MESSAGE,
+                intent=intent.value,
+                citations=[],
+                created_at=utc_now(),
+                tool_trace=[
+                    {
+                        "action": "refusal_followup_to_out_of_domain",
+                        "reason": "preceding_turn_refused",
+                    }
+                ],
+                degraded=False,
+                latency_ms=elapsed_ms,
+            )
+            db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
+
+            return ChatResponse(
+                message=MessageResponse.model_validate(assistant_msg),
+                citations=[],
+                intent=intent.value,
+                degraded=False,
+                latency_ms=elapsed_ms,
+                artifact=None,
+                warnings=[],
+            )
+
         # QA Intent: retrieve with threshold gate
         search_query = rewrite_query(body.content, history=history_messages)
         threshold = settings.retrieval_min_score

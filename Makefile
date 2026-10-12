@@ -1,3 +1,8 @@
+-include .env
+export
+BACKEND_PORT ?= 8000
+FRONTEND_PORT ?= 3000
+
 .PHONY: first-run up down fetch-data ingest test-backend test-frontend clean help
 
 help:
@@ -26,9 +31,9 @@ first-run:
 	@echo "=== Step 5: Ingesting transcripts into pgvector ==="
 	docker compose exec -T backend python -m scripts.ingest
 	@echo "=== First-run setup complete! ==="
-	@echo "Frontend: http://localhost:3000"
-	@echo "Backend API: http://localhost:8000"
-	@echo "API Docs: http://localhost:8000/docs"
+	@echo "Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "Backend API: http://localhost:$(BACKEND_PORT)"
+	@echo "API Docs: http://localhost:$(BACKEND_PORT)/docs"
 
 fetch-data:
 	python3 scripts/fetch_data.py || python scripts/fetch_data.py

@@ -45,7 +45,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}
     restart: unless-stopped
     depends_on:
       backend:
@@ -53,7 +53,7 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}
 
   # Optional containerized Ollama profile.
   # Ollama runs natively on the host machine by default for GPU passthrough.

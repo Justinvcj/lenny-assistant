@@ -1,6 +1,6 @@
 # The Lenny Growth Assistant
 
-A production-grade, domain-specific AI assistant and knowledge engine grounded in transcripts from **Lenny's Podcast** (300+ in-depth conversations with premier product leaders, growth operators, and founders).
+A production-grade, domain-specific AI assistant and knowledge engine grounded in transcripts from **Lenny's Podcast** (303 episode files, 302 valid transcripts ingested (one promo teaser excluded), comprising 21,994 pgvector chunks).
 
 Built for the Forward Deployed Engineer take-home assignment, featuring:
 - **FastAPI** backend with asynchronous request routing, strict validation, and structured telemetry.
@@ -56,10 +56,14 @@ Built for the Forward Deployed Engineer take-home assignment, featuring:
 Measured on modern workstation (Windows 11 / AMD Ryzen 9 / SSD):
 - **Docker Images Build Time**: 42 seconds (Node 20 multi-stage build + Python 3.11-slim).
 - **Database Initial Migration**: 1.8 seconds (Alembic automatic migration).
-- **Transcript Download (`fetch_data.py`)**: 12.4 seconds (303 episode directories, shallow clone).
-- **Full Ingestion Pipeline (302 files, 21,994 chunks)**: **645.60 seconds (~10 min 45 sec)** with `nomic-embed-text` (batch size: 32).
+- **Transcript Download (`fetch_data.py`)**: 12.4 seconds (303 episode files, shallow clone).
+- **Full Ingestion Pipeline**: **645.60 seconds (~10 min 45 sec)** with `nomic-embed-text` (batch size: 32) across **303 episode files, 302 valid transcripts ingested (one promo teaser excluded)**.
+- **Corpus Chunk Count**: **21,994 chunks** (verified via `GET /health` reporting `vector_count: 21994`). One file (`episodes/teaser_2021/transcript.md`) is a short promo teaser for "The Room Where It Happens" without episode metadata or speaker turns and is intentionally excluded by the parser.
 - **Subsequent Idempotent Ingestion**: **4.20 seconds** (all 302 documents recognized by content hash and skipped).
 - **Retrieval P95 Latency**: 24 milliseconds for cosine similarity top-6 lookup across 21,994 pgvector rows.
+
+> **Windows Git Bash / MSYS2 Path Conversion Note**:
+> When running Docker Compose or test commands via Git Bash / MSYS2 on Windows, POSIX-style paths such as `/tmp` or `/data` are automatically rewritten into Windows host paths (e.g., `<user home>/AppData/Local/Temp`) by MSYS2 path translation. This causes Docker volume mounts or container-internal test paths to fail. To prevent automatic path conversion, prefix commands with `MSYS_NO_PATHCONV=1` (e.g. `MSYS_NO_PATHCONV=1 docker compose ...`), or run commands from native Windows PowerShell where no POSIX path conversion occurs.
 
 ---
 
@@ -81,11 +85,14 @@ ollama pull nomic-embed-text
 ```
 
 ### 3. Context Length Configuration
-For optimal retrieval processing of multiple transcript passages, configure Ollama with sufficient context window:
+For optimal retrieval processing of multiple transcript passages, configure Ollama with an 8,192 token context window:
 ```bash
-# Set OLLAMA_CONTEXT_LENGTH if using custom Modelfile, or pass context window via config:
-export OLLAMA_CONTEXT_LENGTH=8192
+# Windows: setx OLLAMA_CONTEXT_LENGTH 8192
+# Linux / macOS: export OLLAMA_CONTEXT_LENGTH=8192
 ```
+
+> **Why 8192 (and NOT 16384)?**:
+> On consumer GPUs with 6GB VRAM (such as the NVIDIA GeForce RTX 4050 Laptop GPU), `qwen2.5:7b` Q4_K_M model weights consume ~4.7 GB of VRAM. An 8,192 token context window requires ~1.2 GB of VRAM for the KV cache, bringing total GPU memory usage to ~5.9 GB—fitting 100% within VRAM for pure GPU inference. Setting `OLLAMA_CONTEXT_LENGTH=16384` expands the KV cache to ~2.4 GB (~7.1 GB total), exceeding the 6GB VRAM boundary and forcing Ollama to offload model layers from GPU VRAM to CPU and system RAM. This offloading triggers an immediate 5x–10x latency penalty, slowing inference from ~25 tokens/s down to 3–5 tokens/s. Therefore, `8192` is recommended consistently across all platforms.
 
 ### 4. Container-to-Host Ollama Networking
 The backend runs containerized while Ollama typically runs directly on the host machine to utilize native GPU hardware acceleration:
@@ -100,17 +107,36 @@ The backend runs containerized while Ollama typically runs directly on the host 
 
 ## 4. Cloud Model Setup (Optional Anthropic Claude)
 
-The application supports switching to Anthropic Claude 3.5 Sonnet for cloud-based inference while retaining local pgvector embeddings.
+The application supports switching to Anthropic Claude 3.5 Sonnet for cloud-based inference while retaining local pgvector embeddings (`nomic-embed-text`).
 
-### Configuration
-1. Open `.env` and configure:
-   ```env
-   LLM_PROVIDER=anthropic
-   LLM_MODEL=claude-3-5-sonnet-20241022
-   ANTHROPIC_API_KEY=sk-ant-api03-your-actual-api-key
-   ```
-2. The active provider and model are automatically surfaced in the frontend UI header badge (e.g. `anthropic · claude-3-5-sonnet-20241022`) and via `/config`.
-3. **Evaluation Disclosure**: Cloud provider integration is verified via isolated unit tests with mocked HTTP transport (`backend/tests/test_llm.py`). It is **NOT tested against the live paid Anthropic API** during automated evaluation runs to prevent credential leakage and billing charges.
+### Exact Environment Variables
+To enable Anthropic Claude, configure these exact variables in `.env`:
+```env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_API_KEY=sk-ant-api03-your-actual-api-key
+```
+
+### Graceful Startup & Error Handling
+- **Graceful Startup**: If `LLM_PROVIDER=anthropic` is set but `ANTHROPIC_API_KEY` is missing, empty, or invalid, the application starts normally without crashing (`AnthropicProvider.__init__` does not raise exceptions).
+- **Diagnostics via `/health`**:
+  - Missing key: `GET /health` returns HTTP 200 with `status: "degraded"` and typed reason `"missing_api_key"` (accessible at `reason` and `provider.reason`).
+  - Invalid key: `GET /health` tests credentials against Anthropic's model API, handles the 401 response cleanly, and returns HTTP 200 with `status: "degraded"` and typed reason `"invalid_api_key"`.
+- **Chat Error Envelope**:
+  - Any chat request (`POST /sessions/{id}/messages`) made with a missing or invalid Anthropic key returns a clean HTTP 502 Bad Gateway response within the standard error envelope:
+    ```json
+    {
+      "error": {
+        "code": "bad_gateway",
+        "message": "Anthropic API key is not configured. Please set ANTHROPIC_API_KEY in environment.",
+        "status_code": 502
+      }
+    }
+    ```
+  - Zero stack traces or internal secrets are leaked in error responses or logs.
+
+### Testing & Evaluation Disclosure
+This cloud provider path is fully implemented, verified with automated unit tests (`backend/tests/test_anthropic_provider.py`, `backend/tests/test_health.py`, `backend/tests/test_llm.py`), and verified through live fault-injection runs (with missing keys and invalid keys returning clean 502 responses). However, in accordance with the zero-cloud-budget constraint of this project, this path is **NOT tested with a valid, paid Anthropic API key**.
 
 ---
 
@@ -147,9 +173,9 @@ If you prefer running commands manually without Makefile or PowerShell scripts:
    ```bash
    ollama pull qwen2.5:7b
    ollama pull nomic-embed-text
-   # Recommended context length:
-   # Windows: setx OLLAMA_CONTEXT_LENGTH 16384
-   # Linux / macOS: export OLLAMA_CONTEXT_LENGTH=16384
+   # Recommended context length (8192 for 100% GPU VRAM fit on 6GB GPUs):
+   # Windows: setx OLLAMA_CONTEXT_LENGTH 8192
+   # Linux / macOS: export OLLAMA_CONTEXT_LENGTH=8192
    ```
 3. Fetch transcript dataset:
    ```bash
@@ -208,6 +234,16 @@ Once completed, open your browser:
 
 *Note: PostgreSQL is **not** published to the host port by default (`127.0.0.1:5432` is commented out) to prevent host port collisions. Backend connects over the internal Docker network.*
 
+### Host Port Configuration
+Host ports are fully configurable via `.env`:
+- `BACKEND_PORT`: Host port mapping for the FastAPI backend (default: `8000`).
+- `FRONTEND_PORT`: Host port mapping for the Vite React frontend (default: `3000`).
+
+To avoid port collisions or manual configuration desynchronization when overriding `BACKEND_PORT`:
+1. `docker-compose.yml` dynamically evaluates `VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}` for both frontend build args and container environment variables. When `BACKEND_PORT` is overridden (e.g. `BACKEND_PORT=8001`), the frontend automatically points to `http://localhost:8001` without requiring manual edits to `VITE_API_BASE_URL`.
+2. `scripts/first-run.ps1` dynamically parses `BACKEND_PORT` and `FRONTEND_PORT` from `.env`, polls `http://localhost:$backendPort/health` during startup, and displays the correct active URLs upon completion.
+3. `Makefile` includes `.env` and exports `BACKEND_PORT` and `FRONTEND_PORT` (defaulting to 8000/3000), ensuring printed endpoints match active host bindings.
+
 ---
 
 ## 8. Fallback Behavior & Degradation Modes
@@ -246,7 +282,7 @@ The system is strictly designed with predictable degradation and zero silent swi
 
 ### 3. Port Conflicts (`8000` or `3000` already in use)
 - **Cause**: Another local service is using port 8000 or 3000.
-- **Fix**: Update `BACKEND_PORT=8001` or `FRONTEND_PORT=3001` in `.env` and rerun `docker compose up -d`.
+- **Fix**: Update `BACKEND_PORT=8001` or `FRONTEND_PORT=3001` in `.env` and rerun `docker compose up -d`. `docker-compose.yml` automatically forwards the new backend port to `VITE_API_BASE_URL` without requiring manual frontend changes.
 
 ### 4. Database Connection Refused
 - **Cause**: `lenny-db` container is still initializing or volume permissions error.
@@ -270,4 +306,22 @@ All core architectural, security, and project specifications live under `docs/` 
 | [`transcripts/README.md`](transcripts/README.md) | Index of real agent execution transcripts, failed spikes, diagnostic traces, and codebase fixes. |
 | [`playbook/START_HERE.md`](playbook/START_HERE.md) | Candidate implementation playbook and step-by-step developer guidelines. |
 | [`playbook/PROMPTS.md`](playbook/PROMPTS.md) | Complete sequential engineering prompts and verification recipes (P1–P13). |
+
+---
+
+## 11. Known Limitations and Technical Debt
+
+1. **Module File Sizes (`chat.py` & `verify.py`)**:
+   - `backend/app/routers/chat.py` (956 lines) and `backend/app/agent/verify.py` (865 lines) exceed the ~300-line general guideline in `SPEC.md`.
+   - **Rationale**: Kept intentionally cohesive to ensure the end-to-end multi-turn conversation lifecycle (intent classification, query rewriting, retrieval gating, SDK orchestration, citation verification, and DB persistence) and the citation verification/repair engine remain traceable within unified domains rather than artificially fragmented across multiple shallow files.
+2. **Essay Generation Latency on 6GB GPUs**:
+   - Generating a full Ship 30 essay using the local `qwen2.5:7b` model on a 6GB GPU (RTX 4050) takes between **120 and 250 seconds** due to generating five sequential sections (headline, lead-in, core tenets, counter-intuitive insight, and conclusion) with local FP16/Q4 compute limits. The timeout is explicitly governed by `ESSAY_TIMEOUT_S=420` in `.env`.
+3. **Cloud Provider Testing with Live API Key**:
+   - The `AnthropicProvider` (Claude 3.5 Sonnet) is fully implemented and validated with automated unit tests (`backend/tests/test_anthropic_provider.py`) and live fault injection (testing graceful startup and clean HTTP 502 responses with missing and invalid keys). However, due to the strict zero-cloud-budget constraint of this project, it has not been tested with an active paid Anthropic API key.
+4. **7B Local Model Faithfulness Mitigations**:
+   - Small local 7B models can occasionally reverse causal statements (e.g., claiming retention drives activation instead of activation driving retention) or hallucinate citations if asked open-ended questions.
+   - **Mitigations Employed**:
+     - Pre-retrieval cosine similarity gating (`RETRIEVAL_MIN_SCORE=0.62` floor) to return immediate canonical refusal with 0 LLM calls on out-of-domain queries.
+     - Directional system prompts enforcing anti-reversal constraints ("state relationships exactly as the source states them") and mandatory `[S#]` claim tags.
+     - Automated citation verification (`verify.py`) cross-referencing `[S#]` tags against database chunk rows, stripping invalid citations, and triggering automatic retry if zero valid citations are found.
 

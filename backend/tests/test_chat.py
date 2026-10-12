@@ -27,7 +27,7 @@ from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
 from app.main import app
 from app.models import Artifact, Message, Session
 from app.rag.retrieval import RetrievalResult
-from app.routers.chat import get_chat_embedder, get_chat_provider
+from app.routers.chat import derive_summary_title, get_chat_embedder, get_chat_provider
 
 
 # ---------------------------------------------------------------------------
@@ -474,3 +474,342 @@ def test_get_artifact_success(client):
         assert data["type"] == "html"
     finally:
         app.dependency_overrides.pop(get_db_session, None)
+
+
+# ---------------------------------------------------------------------------
+# Requirement R6 & R7 Multi-Turn Conversation Tests
+# ---------------------------------------------------------------------------
+
+
+def make_dynamic_mock_db(session_obj: Session):
+    """Dynamic mock DB that tracks messages and artifacts across turns."""
+    messages: list[Message] = []
+    artifacts: list[Artifact] = []
+
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    def fake_add(instance):
+        if isinstance(instance, Message):
+            if not getattr(instance, "id", None):
+                instance.id = uuid.uuid4()
+            if not getattr(instance, "created_at", None):
+                instance.created_at = datetime.now(timezone.utc)
+            messages.append(instance)
+        elif isinstance(instance, Artifact):
+            if not getattr(instance, "id", None):
+                instance.id = uuid.uuid4()
+            if not getattr(instance, "created_at", None):
+                instance.created_at = datetime.now(timezone.utc)
+            artifacts.append(instance)
+
+    mock_db.add = MagicMock(side_effect=fake_add)
+    mock_db.flush = AsyncMock()
+
+    async def fake_refresh(instance):
+        if not getattr(instance, "id", None):
+            instance.id = uuid.uuid4()
+        if not getattr(instance, "created_at", None):
+            instance.created_at = datetime.now(timezone.utc)
+
+    mock_db.refresh = AsyncMock(side_effect=fake_refresh)
+
+    def execute_side_effect(stmt):
+        stmt_str = str(stmt).lower()
+        res = MagicMock()
+        if "from sessions" in stmt_str or "sessions.id" in stmt_str:
+            res.scalar_one_or_none.return_value = session_obj
+        elif "from artifacts" in stmt_str:
+            if artifacts:
+                res.scalar_one_or_none.return_value = artifacts[-1]
+            else:
+                res.scalar_one_or_none.return_value = None
+        elif "from messages" in stmt_str:
+            if ("messages.id !=" in stmt_str or "messages.id not in" in stmt_str) and messages:
+                res.scalars.return_value.all.return_value = list(messages[:-1])
+            else:
+                res.scalars.return_value.all.return_value = list(messages)
+            res.scalar_one_or_none.return_value = None
+        else:
+            res.scalars.return_value.all.return_value = []
+            res.scalar_one_or_none.return_value = None
+        return res
+
+    mock_db.execute = AsyncMock(side_effect=execute_side_effect)
+    mock_db.messages = messages
+    mock_db.artifacts = artifacts
+    return mock_db
+
+
+def test_derive_summary_title_rejects_command_strings():
+    """Verify derive_summary_title rejects artifact/essay command strings and extracts topic from grounded Q."""
+    # Command strings must be rejected and fall back to headings or default
+    assert (
+        derive_summary_title("Make a one-pager (HTML)", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+    assert (
+        derive_summary_title("Make a markdown doc summarizing that", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+    assert (
+        derive_summary_title("Turn that into a Ship 30 essay", "# Product-Market Fit\nBody text")
+        == "Product-Market Fit"
+    )
+    assert derive_summary_title("Summarize that", "Some content") == "Key Growth Insights: Executive Summary"
+    assert (
+        derive_summary_title("Please export markdown", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+    assert (
+        derive_summary_title("Export as markdown", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+    assert (
+        derive_summary_title("Can you export to markdown", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+    assert (
+        derive_summary_title("Why is that?", "Plain answer text")
+        == "Key Growth Insights: Executive Summary"
+    )
+
+    # Grounded questions must extract informative title
+    title1 = derive_summary_title("What did Lenny say about finding product-market fit?", "Answer")
+    assert title1 == "Finding Product-Market Fit: Summary"
+    assert "Make" not in title1
+
+    title2 = derive_summary_title("What drives early retention in SaaS products?", "Answer")
+    assert "Early Retention In Saas Products" in title2
+    assert "Make" not in title2
+
+    title3 = derive_summary_title("Can you explain how to know if you have product-market fit?", "Answer")
+    assert title3 == "Product-Market Fit: Summary"
+    assert "Explain" not in title3
+    assert "Can You" not in title3
+
+
+def test_find_last_grounded_qa_exchange_walkback():
+    """Verify find_last_grounded_qa_exchange walks backward past intermediate artifact turns and elliptical turns."""
+    from app.routers.chat import find_last_grounded_qa_exchange
+
+    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 1, 10, 1, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 1, 1, 10, 2, 0, tzinfo=timezone.utc)
+    t3 = datetime(2026, 1, 1, 10, 3, 0, tzinfo=timezone.utc)
+    t4 = datetime(2026, 1, 1, 10, 4, 0, tzinfo=timezone.utc)
+    t5 = datetime(2026, 1, 1, 10, 5, 0, tzinfo=timezone.utc)
+
+    msg_user_qa = Message(
+        id=uuid.uuid4(),
+        role="user",
+        content="What did Lenny say about finding product-market fit?",
+        created_at=t0,
+    )
+    msg_asst_qa = Message(
+        id=uuid.uuid4(),
+        role="assistant",
+        content="Product-market fit happens when retention curves flatten [S1].",
+        citations=[{"chunk_id": str(uuid.uuid4()), "guest": "Peter Specht", "title": "Finding PMF"}],
+        intent="qa",
+        created_at=t1,
+    )
+    msg_user_art1 = Message(
+        id=uuid.uuid4(),
+        role="user",
+        content="Make a one-pager (HTML)",
+        created_at=t2,
+    )
+    msg_asst_art1 = Message(
+        id=uuid.uuid4(),
+        role="assistant",
+        content="Your HTML one-pager is ready: 'Finding Product-Market Fit: Summary' (150 words)...",
+        citations=[],
+        intent="artifact",
+        created_at=t3,
+    )
+
+    history = [msg_user_qa, msg_asst_qa, msg_user_art1, msg_asst_art1]
+    u, a = find_last_grounded_qa_exchange(history)
+    assert u is not None and u.content == "What did Lenny say about finding product-market fit?"
+    assert a is not None and "retention curves flatten" in a.content
+
+    # Also test walkback past follow-up QA exchange ("Why is that?")
+    msg_user_fu = Message(
+        id=uuid.uuid4(),
+        role="user",
+        content="Why is that?",
+        created_at=t4,
+    )
+    msg_asst_fu = Message(
+        id=uuid.uuid4(),
+        role="assistant",
+        content="Because customer retention stabilizes cohorts [S1].",
+        citations=[{"chunk_id": str(uuid.uuid4()), "guest": "Peter Specht", "title": "Finding PMF"}],
+        intent="qa",
+        created_at=t5,
+    )
+    fu_history = [msg_user_qa, msg_asst_qa, msg_user_fu, msg_asst_fu]
+    u2, a2 = find_last_grounded_qa_exchange(fu_history)
+    assert u2 is not None and u2.content == "What did Lenny say about finding product-market fit?"
+    assert a2 is not None and "customer retention stabilizes cohorts" in a2.content
+
+
+def test_chained_artifact_requests_retain_original_grounded_title(client):
+    """Test sequence: QA answer -> 'Make a one-pager (HTML)' -> 'Make a markdown doc summarizing that'.
+    Assert BOTH artifacts carry the title derived from the original QA topic, never from command text.
+    """
+    session_id = uuid.uuid4()
+    mock_session_obj = Session(
+        id=session_id,
+        llm_provider="ollama",
+        llm_model="qwen2.5:7b",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    mock_db = make_dynamic_mock_db(session_obj=mock_session_obj)
+
+    high_chunk = make_retrieval_chunk(
+        score=0.85,
+        title="Finding Product-Market Fit",
+        guest="Peter Specht",
+        text="Lenny explains that finding product-market fit is proven when retention curves flatten into a horizontal line.",
+    )
+
+    provider = MockLLMProvider(
+        responses=["Product-market fit is proven when retention curves flatten horizontally [S1]."]
+    )
+    embedder = MockEmbedder()
+
+    async def override_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db_session] = override_db
+    app.dependency_overrides[get_chat_provider] = lambda: provider
+    app.dependency_overrides[get_chat_embedder] = lambda: embedder
+
+    try:
+        # Turn 1: Grounded question
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[high_chunk])):
+            resp1 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "What did Lenny say about finding product-market fit?"},
+            )
+        assert resp1.status_code == 200
+        data1 = resp1.json()
+        assert len(data1["citations"]) >= 1
+        assert "retention curves flatten" in data1["message"]["content"]
+
+        # Turn 2: Chained HTML artifact command
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[high_chunk])):
+            resp2 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "Make a one-pager (HTML)"},
+            )
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        art2 = data2.get("artifact")
+        assert art2 is not None
+        assert art2["type"] == "html"
+        # Assert title is derived from original QA topic, NOT command string
+        assert art2["title"] == "Finding Product-Market Fit: Summary"
+        assert "Make" not in art2["title"]
+        assert "One-Pager" not in art2["title"]
+
+        # Turn 3: Chained Markdown artifact command
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[high_chunk])):
+            resp3 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "Make a markdown doc summarizing that"},
+            )
+        assert resp3.status_code == 200
+        data3 = resp3.json()
+        art3 = data3.get("artifact")
+        assert art3 is not None
+        assert art3["type"] == "markdown"
+        # Assert title is derived from original QA topic, NOT command string
+        assert art3["title"] == "Finding Product-Market Fit: Summary"
+        assert "Make" not in art3["title"]
+        assert "Markdown" not in art3["title"]
+        assert "Summarizing That" not in art3["title"]
+
+        # Assert BOTH artifacts carry the exact topic-derived title
+        assert art2["title"] == art3["title"] == "Finding Product-Market Fit: Summary"
+
+        # Assert base_text for the markdown doc was the grounded answer, NOT the confirmation string
+        assert "Your HTML one-pager is ready" not in art3["content"]
+        assert "retention curves flatten" in art3["content"].lower()
+
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+        app.dependency_overrides.pop(get_chat_provider, None)
+        app.dependency_overrides.pop(get_chat_embedder, None)
+
+
+def test_followup_after_out_of_domain_refusal_is_refused(client):
+    """When a question is refused for being out-of-domain, an immediate 'Why is that?' follow-up is also immediately refused."""
+    session_id = uuid.uuid4()
+    mock_session_obj = Session(
+        id=session_id,
+        llm_provider="ollama",
+        llm_model="qwen2.5:7b",
+        created_at=datetime.now(timezone.utc),
+    )
+    mock_db = make_dynamic_mock_db(session_obj=mock_session_obj)
+
+    low_chunk = make_retrieval_chunk(score=0.40, text="Unrelated text")
+    provider = MockLLMProvider()
+    embedder = MockEmbedder()
+
+    async def override_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db_session] = override_db
+    app.dependency_overrides[get_chat_provider] = lambda: provider
+    app.dependency_overrides[get_chat_embedder] = lambda: embedder
+
+    try:
+        # Turn 1: Out of domain question -> immediate refusal
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[low_chunk])):
+            resp1 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "How do I bake chocolate cake?"},
+            )
+        assert resp1.status_code == 200
+        assert resp1.json()["message"]["content"] == EXACT_REFUSAL_MESSAGE
+        assert provider.call_count == 0
+
+        # Turn 2: "Why is that?" follow-up -> MUST maintain immediate refusal with 0 LLM calls
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[low_chunk])):
+            resp2 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "Why is that?"},
+            )
+        assert resp2.status_code == 200
+        assert resp2.json()["message"]["content"] == EXACT_REFUSAL_MESSAGE
+        assert provider.call_count == 0
+
+        # Turn 3: "Can you explain that more?" cascading follow-up -> MUST maintain immediate refusal with 0 LLM calls
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[low_chunk])):
+            resp3 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "Can you explain that more?"},
+            )
+        assert resp3.status_code == 200
+        assert resp3.json()["message"]["content"] == EXACT_REFUSAL_MESSAGE
+        assert provider.call_count == 0
+
+        # Turn 4: "Tell me more about it" cascading follow-up -> MUST maintain immediate refusal with 0 LLM calls
+        with patch("app.routers.chat.retrieve", new=AsyncMock(return_value=[low_chunk])):
+            resp4 = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"content": "Tell me more about it"},
+            )
+        assert resp4.status_code == 200
+        assert resp4.json()["message"]["content"] == EXACT_REFUSAL_MESSAGE
+        assert provider.call_count == 0
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+        app.dependency_overrides.pop(get_chat_provider, None)
+        app.dependency_overrides.pop(get_chat_embedder, None)
+

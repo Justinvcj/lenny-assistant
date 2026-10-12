@@ -44,7 +44,7 @@ Date: 2026-10-11. Host: Windows 11, Docker Desktop, native Ollama. Rules: READ-O
 
 ## 1. Phase A — Fresh clone from GitHub
 
-Executed from `C:\Users\Justin\AppData\Local\Temp\lenny-fresh` with compose project name `-p audit` on ports `8010`/`3010`.
+Executed from `<temp folder>\lenny-fresh` with compose project name `-p audit` on ports `8010`/`3010`.
 
 ### Timings (seconds)
 

@@ -26,8 +26,10 @@ from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from app.agent.router import Intent
 from app.agent.tools import build_tool_server
 from app.config import get_settings
+from app.errors import AppException
 from app.llm.base import ChatMessage, LLMProvider
 from app.llm.factory import get_provider
+from fastapi import status
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +96,7 @@ async def _run_with_sdk(
     # Local import so test suites that mock the SDK via monkeypatch still work.
     from claude_agent_sdk import (
         AssistantMessage, ClaudeSDKClient, ResultMessage,
-        SystemMessage, TextBlock, ToolResultBlock, ToolUseBlock,
+        SystemMessage, TextBlock, ToolUseBlock,
     )
 
     settings = get_settings()
@@ -116,9 +118,10 @@ async def _run_with_sdk(
             system_prompt=system_prompt,
             max_turns=5,
         )
+        if provider_config.name == "anthropic":
+            options.env["ANTHROPIC_API_KEY"] = provider_config.anthropic_api_key or ""
 
         tool_calls: List[Dict[str, Any]] = []
-        tool_results: Dict[str, Dict[str, Any]] = {}
         final_text_parts: List[str] = []
         artifact_payload: Optional[Dict[str, Any]] = None
         init_tools: List[str] = []
@@ -148,6 +151,12 @@ async def _run_with_sdk(
                                     "id": block.id,
                                 })
                             elif isinstance(block, TextBlock):
+                                if "invalid api key" in block.text.lower():
+                                    raise AppException(
+                                        code="bad_gateway",
+                                        message="Anthropic authentication failed. Invalid API key.",
+                                        status_code=status.HTTP_502_BAD_GATEWAY,
+                                    )
                                 final_text_parts.append(block.text)
                     elif isinstance(message, ResultMessage):
                         nonlocal input_tokens, output_tokens, num_turns
@@ -155,6 +164,19 @@ async def _run_with_sdk(
                         usage = message.usage or {}
                         input_tokens = int(usage.get("input_tokens", 0) or 0)
                         output_tokens = int(usage.get("output_tokens", 0) or 0)
+                        if message.is_error:
+                            err_msg = message.result or "SDK execution error"
+                            if (
+                                "invalid api key" in err_msg.lower()
+                                or "auth" in err_msg.lower()
+                                or "401" in err_msg
+                            ):
+                                raise AppException(
+                                    code="bad_gateway",
+                                    message="Anthropic authentication failed. Invalid API key.",
+                                    status_code=status.HTTP_502_BAD_GATEWAY,
+                                )
+                            raise RuntimeError(f"SDK execution error: {err_msg}")
                         if message.result and not final_text_parts:
                             final_text_parts.append(message.result)
                     # Tool result blocks arrive on UserMessage; we don't need to
@@ -214,6 +236,12 @@ async def _run_with_sdk(
                             logger.warning("Replay of ship30 essay failed: %s", exc)
 
         content = ("".join(final_text_parts).strip() or EXACT_REFUSAL_MESSAGE)
+        if "invalid api key" in content.lower():
+            raise AppException(
+                code="bad_gateway",
+                message="Anthropic authentication failed. Invalid API key.",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
         return AgentResult(
             content=content,
             tool_trace=[{"sdk_tools": init_tools, "calls": tool_calls}],
@@ -263,9 +291,29 @@ async def _run_degraded(
             degraded=True,
             runtime="degraded",
         )
+    except AppException:
+        # Re-raise explicit application exceptions (e.g. 502 bad_gateway)
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("orchestrator: degraded provider.chat failed: %s: %s",
                      type(exc).__name__, exc)
+        err_str = str(exc)
+        if (
+            "401" in err_str
+            or "auth" in err_str.lower()
+            or "invalid api key" in err_str.lower()
+            or "api_key" in err_str.lower()
+            or "AuthenticationError" in type(exc).__name__
+        ):
+            if "not configured" in err_str.lower() or "not set" in err_str.lower() or "is required" in err_str.lower():
+                msg = "Anthropic API key is not configured. Please set ANTHROPIC_API_KEY in environment."
+            else:
+                msg = "Anthropic authentication failed. Invalid API key."
+            raise AppException(
+                code="bad_gateway",
+                message=msg,
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            ) from exc
         return AgentResult(
             content=EXACT_REFUSAL_MESSAGE,
             tool_trace=[{
@@ -350,8 +398,30 @@ async def run_agent(
             system_prompt, user_message, _provider,
             reason=f"timeout after {elapsed:.1f}s", exc_type="TimeoutError",
         )
+    except AppException:
+        raise
     except Exception as exc:  # noqa: BLE001
         elapsed = time.monotonic() - t0
+        err_str = str(exc)
+        auth_exc_names = ("AuthenticationError", "PermissionDeniedError")
+        if (
+            type(exc).__name__ in auth_exc_names
+            or "401" in err_str
+            or "invalid api key" in err_str.lower()
+            or "anthropic_api_key is required" in err_str.lower()
+            or ("anthropic" in provider_cfg.name.lower() and "auth" in err_str.lower())
+        ):
+            if "anthropic_api_key is required" in err_str.lower() or "not configured" in err_str.lower():
+                msg = "Anthropic API key is not configured. Please set ANTHROPIC_API_KEY in environment."
+            else:
+                msg = "Anthropic authentication failed. Invalid API key."
+            logger.error("orchestrator: cloud provider auth error: %s: %s", type(exc).__name__, exc)
+            raise AppException(
+                code="bad_gateway",
+                message=msg,
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            ) from exc
+
         if intent == Intent.ARTIFACT:
             logger.warning(
                 "orchestrator: ARTIFACT intent failed (%s: %s) — skipping second provider call per Item 9b",

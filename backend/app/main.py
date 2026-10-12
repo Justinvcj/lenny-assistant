@@ -8,11 +8,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from sqlalchemy.exc import DBAPIError, OperationalError
+
+try:
+    import psycopg
+    PSYCOPG_ERRORS = (psycopg.OperationalError, psycopg.Error)
+except ImportError:
+    PSYCOPG_ERRORS = ()
+
 from app.config import get_settings
 from app.logging_setup import setup_logging
 from app.errors import (
     AppException,
     app_exception_handler,
+    db_connection_exception_handler,
     validation_exception_handler,
     unhandled_exception_handler,
 )
@@ -70,6 +79,11 @@ app.add_middleware(RequestContextMiddleware)
 
 # Error handlers
 app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(OperationalError, db_connection_exception_handler)
+app.add_exception_handler(DBAPIError, db_connection_exception_handler)
+if PSYCOPG_ERRORS:
+    for err_cls in PSYCOPG_ERRORS:
+        app.add_exception_handler(err_cls, db_connection_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 

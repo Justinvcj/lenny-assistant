@@ -2,7 +2,7 @@
 # ── Read this at the start of every new session ──
 
 ## Project
-- **Repo**: `c:\Users\Justin\The Global Projects Folder\lenny-assistant`
+- **Repo**: `<project folder>`
 - **GitHub**: https://github.com/Justinvcj/lenny-assistant.git  branch: `main`
 - **Goal**: 100% local RAG conversational agent (Lenny's Podcast), zero-budget, Ollama qwen2.5:7b
 

@@ -18,7 +18,7 @@ Letters after a number (P3a, P3b, P3c) are parts of one job. You paste them one 
 Do these in Command Prompt, in order.
 
 1. Unzip `lenny-kit.zip`. Copy everything inside the `lenny-kit` folder into the **root** of your project:
-   `C:\Users\Justin\The Global Projects Folder\lenny-assistant\`
+   `<project folder>\`
    After this, `SPEC.md`, `docs\` and `playbook\` sit next to your `spike\` folder. (Do not overwrite anything of yours; `KIT_README.md` is just a note, you can delete it.)
 2. Open the file `.gitignore` in the project root (create it if missing) and make sure it contains these lines:
    ```
@@ -32,7 +32,7 @@ Do these in Command Prompt, in order.
    ```
 3. Download the transcripts:
    ```
-   cd "C:\Users\Justin\The Global Projects Folder\lenny-assistant"
+   cd "<project folder>"
    mkdir data
    git clone --depth 1 https://github.com/LennysNewsletter/lennys-newsletterpodcastdata data\lenny-source
    dir data\lenny-source

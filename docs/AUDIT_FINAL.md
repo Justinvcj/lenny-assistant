@@ -17,7 +17,7 @@ Date: 2026-10-11. Host: Windows 11, Docker Desktop, native Ollama. Rules: READ-O
 | `.gitignore` covers `.env`, `data/`, `notes/` | yes |
 | Secrets in HEAD | none real. `README.md:110` shows `ANTHROPIC_API_KEY=sk-ant-api03-your-actual-api-key` — **placeholder** (`your-actual-api-key` suffix), fine for `.env.example`-style doc |
 | Secrets in full history (`git log --all -p -S`) | one hit on the same placeholder; no real `sk-ant-api…` tokens, no `BEGIN … PRIVATE KEY`, no bearer tokens |
-| PII leak via tracked files | **FINDING P1-1** (MEDIUM): `playbook/START_HERE.md:21,35` and `playbook/WORK_SPLIT.md:55,61` hard-code the author's local path `C:\Users\Justin\The Global Projects Folder\lenny-assistant\`. `transcripts/README.md` uses `file:///c:/Users/Justin/...` links. An evaluator cloning the repo sees the candidate's Windows username. Not a secret, but unprofessional. |
+| PII leak via tracked files | **FINDING P1-1** (MEDIUM): `playbook/START_HERE.md:21,35` and `playbook/WORK_SPLIT.md:55,61` hard-code the author's local path `<project folder>\`. `transcripts/README.md` uses file URLs. An evaluator cloning the repo sees the candidate's Windows username. Not a secret, but unprofessional. |
 | Transcripts folder | real: 3 agent-run `.log` files + a detailed `README.md` post-mortem. Legit evidence of the "built-in tools explosion → lockdown" story. PASS. |
 | `playbook/`, `.gsd/`, `spike/`, `prompt_draft.md` in repo | **FINDING P1-2** (LOW/MEDIUM): `playbook/` (3 files, 36 KB `PROMPTS.md`) and `.gsd/STATE.md` are internal process notes. They don't harm, but they advertise that the project was built by prompting other AI tools and expose the candidate's work-tracking. An FDE evaluator will read these. `prompt_draft.md` (untracked locally, not in HEAD — ignore). |
 | Files > 300 lines (SPEC §6 cap) | **FINDING P1-3** (MEDIUM): `backend/app/routers/chat.py` (37 KB), `backend/app/agent/verify.py` (35 KB), `backend/app/skills/ship30.py` (22 KB), `backend/tests/test_rag.py` (25 KB). SPEC says "No file > ~300 lines." Several app modules now exceed that by 2–3×. |
@@ -133,7 +133,7 @@ Stack healthy: 302 documents, 21,994 chunks, 0 null embeddings, 61 sessions, 194
 
 | ID | Severity | Area | Finding | Evidence | Label | Suggested fix | Est |
 |---|---|---|---|---|---|---|---|
-| P1-1 | MEDIUM | Repo hygiene | Candidate's full Windows user path leaks via `playbook/*.md` and `transcripts/README.md` | `playbook/START_HERE.md:21,35`; `playbook/WORK_SPLIT.md:55,61`; `transcripts/README.md` `file:///c:/Users/Justin/...` | CONFIRMED | `sed -i 's#C:/Users/Justin/[^/"]*#…#g'` across those three files, or move playbook to `notes/` (ignored) | 15m |
+| P1-1 | MEDIUM | Repo hygiene | Candidate's full Windows user path leaks via `playbook/*.md` and `transcripts/README.md` | `playbook/START_HERE.md:21,35`; `playbook/WORK_SPLIT.md:55,61`; `transcripts/README.md` file URLs | CONFIRMED | Clean paths across those three files, or move playbook to `notes/` (ignored) | 15m |
 | P1-2 | LOW | Repo hygiene | `playbook/` and `.gsd/STATE.md` are internal process notes shipped to evaluators | `git ls-files playbook/ .gsd/` | CONFIRMED | Move under `notes/` (gitignored) or document them as "project history" in README | 10m |
 | P1-3 | MEDIUM | Code quality | SPEC §6 says "no file > ~300 lines"; `backend/app/routers/chat.py` ≈37 KB, `verify.py` ≈35 KB, `ship30.py` ≈22 KB | `git ls-files` + `wc` | CONFIRMED | Split chat.py into `chat/qa.py`, `chat/essay.py`, `chat/artifact.py`; move deterministic builder to its own module | 2–3h |
 | P3-1 | MEDIUM | Grounding / follow-up | Pronoun follow-up ("Why is that?") refused with no reference resolution; `rewrite_query` either didn't fire or didn't score above threshold | S3 run: "Why is that?" → 0 cits refusal | CONFIRMED | In `prompts.rewrite_query`, when the message is 2–3 words and anaphoric, OR'ing with the prior assistant answer's TITLE text (not just the prior user question) improves retrieval; also lower the follow-up threshold temporarily | 1h |
@@ -206,7 +206,7 @@ Stack healthy: 302 documents, 21,994 chunks, 0 null embeddings, 61 sessions, 194
 4. **P7-1**: HTML-escape artifact `<title>` in `wrapHtmlDocument`. 20 m.
 5. **P3-1**: fix pronoun follow-up — rewrite_query should include the prior answer's title and lower the threshold for anaphoric follow-ups. 1 h.
 6. **P3-2**: `derive_summary_title` must walk past ARTIFACT/ESSAY user turns. 30 m.
-7. **P1-1**: scrub `C:\Users\Justin\…` from `playbook/*.md` and `transcripts/README.md`. 15 m.
+7. **P1-1**: scrub `<project folder>\…` from `playbook/*.md` and `transcripts/README.md`. 15 m.
 8. **P7-2**: fix `**` leakage in the deterministic HTML builder (markdown-it config). 20 m.
 9. **P3-3**: sort citation list by numeric `n` in the artifact builder. 10 m.
 10. **P1-3**: split `chat.py` into per-intent modules (SPEC §6 compliance). 2–3 h — do only if time; cosmetic for review.
@@ -227,7 +227,7 @@ P7-1, P3-2, P1-1 (plus run ESSAY-RISK and RESILIENCE-RISK verifications so you c
 7. "Why does your chat.py have 37 KB?" — call out SPEC §6 and plan a refactor.
 8. "How do you prevent prompt injection via retrieved chunks?" — `<source … untrusted>` + verifier + exact refusal; show S8.
 9. "What's your retrieval threshold tuned on?" — threshold is 0.62; verify_measurements.py exists but numbers not re-run.
-10. "Why does an evaluator see `C:\Users\Justin\…` in your repo?" — clean up now (P1-1).
+10. "Why does an evaluator see `<project folder>\…` in your repo?" — clean up now (P1-1).
 
 ---
 

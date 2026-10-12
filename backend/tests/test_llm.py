@@ -132,8 +132,8 @@ def test_factory_unknown_provider_raises():
         get_provider("gpt4")
 
 
-def test_factory_anthropic_raises_without_key(monkeypatch):
-    """Requesting 'anthropic' without an API key should raise RuntimeError."""
+def test_factory_anthropic_graceful_without_key(monkeypatch):
+    """Factory returns AnthropicProvider even without an API key (graceful startup)."""
     import app.config as cfg_module
 
     # Patch settings to have an empty key
@@ -141,10 +141,12 @@ def test_factory_anthropic_raises_without_key(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
 
     from app.llm.factory import get_provider
+    from app.llm.anthropic_provider import AnthropicProvider
 
-    with pytest.raises((RuntimeError, ImportError)):
-        # Either anthropic not installed (ImportError) or key missing (RuntimeError)
-        get_provider("anthropic")
+    provider = get_provider("anthropic")
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._api_key == ""
+    assert provider._client is None
 
 
 # ---------------------------------------------------------------------------
@@ -211,16 +213,32 @@ def test_anthropic_provider_no_package(monkeypatch):
     monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", original)
 
 
-def test_anthropic_provider_missing_api_key(monkeypatch):
-    """AnthropicProvider must raise RuntimeError when ANTHROPIC_API_KEY is unset."""
+@pytest.mark.asyncio
+async def test_anthropic_provider_missing_api_key(monkeypatch):
+    """AnthropicProvider initializes gracefully without key, reports missing_api_key on health(), and raises 502 on chat()."""
     from unittest.mock import MagicMock
     import app.llm.anthropic_provider as ap_module
     from app.llm.anthropic_provider import AnthropicProvider
+    from app.errors import AppException
 
     monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(ap_module, "_anthropic", MagicMock())
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY is not set"):
-        AnthropicProvider(api_key="")
+
+    # Graceful instantiation without raising RuntimeError
+    provider = AnthropicProvider(api_key="")
+    assert provider._api_key == ""
+    assert provider._client is None
+
+    # Health reports missing_api_key
+    h = await provider.health()
+    assert h.ok is False
+    assert h.error == "missing_api_key"
+
+    # Chat raises 502 AppException
+    with pytest.raises(AppException) as exc_info:
+        await provider.chat([ChatMessage(role="user", content="hello")])
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.code == "bad_gateway"
 
 
 @pytest.mark.asyncio
@@ -298,5 +316,5 @@ async def test_anthropic_provider_health_mocked_http(monkeypatch):
     mock_client.models.list = AsyncMock(side_effect=Exception("401 Unauthorized: Invalid API Key"))
     health_err = await provider.health()
     assert health_err.ok is False
-    assert "Invalid API Key" in (health_err.error or "")
+    assert health_err.error == "invalid_api_key"
 

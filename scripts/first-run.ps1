@@ -15,6 +15,19 @@ if (-not (Test-Path ".env")) {
     Write-Host "[1/5] Using existing .env configuration." -ForegroundColor Green
 }
 
+$backendPort = 8000
+$frontendPort = 3000
+if (Test-Path ".env") {
+    Get-Content ".env" | ForEach-Object {
+        if ($_ -match "^\s*BACKEND_PORT\s*=\s*(\d+)") {
+            $backendPort = [int]$matches[1]
+        }
+        if ($_ -match "^\s*FRONTEND_PORT\s*=\s*(\d+)") {
+            $frontendPort = [int]$matches[1]
+        }
+    }
+}
+
 # 2. Fetch transcript data
 Write-Host "[2/5] Fetching podcast transcripts..." -ForegroundColor Yellow
 $py = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "python" }
@@ -33,12 +46,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 4. Wait until backend is healthy
-Write-Host "[4/5] Waiting for backend to become healthy..." -ForegroundColor Yellow
+Write-Host "[4/5] Waiting for backend to become healthy on port $backendPort..." -ForegroundColor Yellow
 $healthy = $false
 $maxAttempts = 30
 for ($i = 1; $i -le $maxAttempts; $i++) {
     try {
-        $resp = Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
+        $resp = Invoke-RestMethod -Uri "http://localhost:$backendPort/health" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
         if ($resp -and $resp.database -and $resp.database.connected -eq $true) {
             $healthy = $true
             Write-Host "Backend reported healthy (DB connected)!" -ForegroundColor Green
@@ -65,7 +78,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host "  Lenny Growth Assistant is Ready!                     " -ForegroundColor Green
-Write-Host "  Frontend : http://localhost:3000                     " -ForegroundColor Green
-Write-Host "  Backend  : http://localhost:8000                     " -ForegroundColor Green
-Write-Host "  API Docs : http://localhost:8000/docs                " -ForegroundColor Green
+Write-Host "  Frontend : http://localhost:$frontendPort                     " -ForegroundColor Green
+Write-Host "  Backend  : http://localhost:$backendPort                     " -ForegroundColor Green
+Write-Host "  API Docs : http://localhost:$backendPort/docs                " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
