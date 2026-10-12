@@ -55,19 +55,16 @@ sequenceDiagram
     end
 ```
 
-1. Frontend POSTs the user message to `/sessions/{id}/messages`.
-2. **Deterministic intent router** classifies QA / ESSAY / ARTIFACT and picks a tool menu (one tool per intent).
-3. For QA, **retrieval runs in code first** (not as a tool call): embed query → pgvector cosine → top-k.
-4. If `top_score < RETRIEVAL_MIN_SCORE`, the backend returns the exact refusal sentence **without calling the LLM**. Short/anaphoric follow-ups to a grounded answer bypass the score gate and merge the previous turn's cited chunks (R1 fix).
-5. Otherwise the backend builds a numbered-sources prompt (`[S1]..[Sn]`), calls the locked-down agent runtime, verifies every `[S#]` tag against the retrieved set, and persists the message + citations.
-6. ESSAY runs the Ship 30 skill (plan → draft → expand → repair → validate). ARTIFACT emits a deterministic HTML or Markdown document from the previous grounded answer (no new LLM call). Both open in the sandboxed viewer.
+ESSAY runs the Ship 30 skill (plan → draft → expand → repair → validate). ARTIFACT emits a deterministic HTML or Markdown document from the previous grounded answer (no new LLM call). Both open in the sandboxed viewer.
 
 Key design decisions (see `SPEC.md §4` and `spike/SPIKE_LOG.md`):
 
 - **D1 Retrieval runs in code**, not as a tool call. Spike: raw tool-calling skipped the tool 4/4 times on a specific topic.
 - **D2 Tool-menu narrowing**: one tool per intent; the agent sees fewer tools and behaves predictably on a 7B model.
 - **D3 Locked-down agent**: SDK built-in tools (Bash, Read, Write, Edit, WebFetch, ...) all disabled; `cwd` set to an empty temp dir. Spike: dropped prompt size from ~21.7k to 384 tokens.
-- **D4 Grounding protocol**: `[S#]` tags validated server-side; citation list built from the database, never from model text.
+- **D4 Grounding protocol**: `[S#]` tags validated server-side; citation list built from the database, never from model text. If retrieval is empty or below `RETRIEVAL_MIN_SCORE`, return the exact refusal sentence **without calling the LLM**.
+- **D5 Faithfulness ≠ citation**: a citation proves where the model looked, not that it read the passage correctly. The UI shows the source passage beside each citation so the reader can verify. Spike: 2/15 answers cited the right episode and reversed the claim.
+- **D6 Providers**: `ollama` (default, tested) and `anthropic` (implemented, UNTESTED without a key). No silent switch between providers.
 - **D7 Artifacts are untrusted**: viewer iframe uses `sandbox=""` (no `allow-scripts`, no `allow-same-origin`), DOMPurify, inline CSP.
 - **D8 Degraded mode**: on agent-runtime failure, fall back to a direct provider call with the same grounded prompt and set `degraded: true`.
 
