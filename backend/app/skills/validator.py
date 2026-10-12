@@ -310,22 +310,50 @@ def validate_essay(
     if not structure_passed:
         failed_rules.append("R_STRUCTURE")
 
-    # 5. R_SPECIFIC_HEADINGS: Specific section headings (reject > 1 containing full topic)
+    # 5. R_SPECIFIC_HEADINGS: body headings must be content-specific:
+    #    - no heading from the old hardcoded ship30 template list (D1);
+    #    - all body headings unique;
+    #    - at most one heading contains the full multi-word topic string.
     topic_clean = clean_topic_string(topic) if topic else ""
+    old_template_headings = {
+        "defining the core value moment early",
+        "measuring leading indicators vs. vanity metrics",
+        "compounding feedback loops and team workflows",
+        "friction reduction and operational pitfalls",
+        "tactical execution: from pilot to scaling",
+    }
+    body_titles = [bs["title"] for bs in body_sections]
+    old_list_hits = [t for t in body_titles if t.strip().lower() in old_template_headings]
+    duplicate_titles = [t for t in body_titles if body_titles.count(t) > 1]
     topic_heading_matches = []
     if topic_clean and len(topic_clean.split()) >= 2:
-        for bs in body_sections:
-            if topic_clean in bs["title"].lower():
-                topic_heading_matches.append(bs["title"])
-    specific_headings_passed = len(topic_heading_matches) <= 1
+        for t in body_titles:
+            if topic_clean in t.lower():
+                topic_heading_matches.append(t)
+    specific_headings_passed = (
+        not old_list_hits
+        and not duplicate_titles
+        and len(topic_heading_matches) <= 1
+    )
+    if specific_headings_passed:
+        details = "Headings are specific to content."
+    else:
+        parts = []
+        if old_list_hits:
+            parts.append(f"old-template headings: {old_list_hits}")
+        if duplicate_titles:
+            parts.append(f"duplicate body headings: {sorted(set(duplicate_titles))}")
+        if len(topic_heading_matches) > 1:
+            parts.append(f"too many headings containing topic string: {topic_heading_matches}")
+        details = "; ".join(parts)
     rule_results.append(
         RuleValidation(
             rule_id="R_SPECIFIC_HEADINGS",
             rule_name="Content-Specific Section Headings",
             passed=specific_headings_passed,
-            details="Headings are specific to content." if specific_headings_passed else f"Too many templated headings containing topic string: {topic_heading_matches}",
-            target="<= 1 heading containing full topic string",
-            actual=f"{len(topic_heading_matches)} matching headings",
+            details=details,
+            target="no old-template or duplicate headings; <= 1 heading containing full topic string",
+            actual=f"{len(topic_heading_matches)} topic-string matches, {len(old_list_hits)} old-template, {len(set(duplicate_titles))} duplicate",
         )
     )
     if not specific_headings_passed:

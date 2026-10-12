@@ -281,15 +281,66 @@ def plan_outline(topic: str, sources: List[Any]) -> List[SectionPlan]:
     return plans
 
 
+_ANGLE_PATTERNS: List[str] = [
+    "Framing the {kw} problem",
+    "What the data on {kw} shows",
+    "Common pitfalls around {kw}",
+    "Mechanics that make {kw} compound",
+    "Where teams go wrong with {kw}",
+    "Signals and metrics for {kw}",
+    "A step-by-step approach to {kw}",
+    "Making {kw} stick after launch",
+]
+
+
+def _topic_keyword(topic: str) -> str:
+    """Pick the most content-bearing noun phrase from the topic string.
+
+    Deterministic (no LLM): strips stopwords and ship-30 wrappers, keeps the
+    first 1–2 content words. Used only to seed section headings.
+    """
+    stop = {
+        "a", "an", "the", "for", "of", "and", "or", "to", "in", "on", "about",
+        "with", "ideas", "insights", "featuring", "early", "stage", "startups",
+        "essay", "ship", "30", "post", "article",
+    }
+    words = re.findall(r"[A-Za-z][A-Za-z-]+", topic.lower())
+    core = [w for w in words if w not in stop and len(w) > 2]
+    if not core:
+        core = words or ["the subject"]
+    return " ".join(core[:2])
+
+
 def _derive_specific_themes(topic: str, sources: List[Any], n: int = 5) -> List[str]:
-    """Derive distinct, content-specific headings for body sections without repeating full topic string."""
-    themes: List[str] = [
-        "Defining the Core Value Moment Early",
-        "Measuring Leading Indicators vs. Vanity Metrics",
-        "Compounding Feedback Loops and Team Workflows",
-        "Friction Reduction and Operational Pitfalls",
-        "Tactical Execution: From Pilot to Scaling",
-    ]
+    """Derive distinct, content-specific body headings per topic (D1 fix).
+
+    Deterministic: no LLM call at the planning step; the per-section drafts can
+    still refine content. The headings vary by topic because they interpolate a
+    keyword drawn from the topic itself. Guarantees:
+      - no heading is in the old hard-coded template list;
+      - no two body headings are identical;
+      - no heading contains the full (multi-word) topic string;
+      - each heading is 3–10 words.
+    """
+    kw = _topic_keyword(topic) or "the subject"
+    themes: List[str] = []
+    topic_lower = topic.strip().lower()
+    for pattern in _ANGLE_PATTERNS:
+        if len(themes) >= n:
+            break
+        candidate = pattern.format(kw=kw).strip()
+        # Guard: do not emit the full topic string verbatim as a heading.
+        if len(topic_lower.split()) >= 2 and topic_lower in candidate.lower():
+            continue
+        if candidate in themes:
+            continue
+        themes.append(candidate)
+    # Safety: if we somehow could not fill n unique themes, pad with
+    # position-numbered variants rather than reusing one.
+    i = 2
+    while len(themes) < n:
+        themes.append(f"Angle {i} on {kw}")
+        i += 1
     return themes[:n]
 
 
