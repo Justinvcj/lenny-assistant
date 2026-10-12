@@ -6,8 +6,8 @@ never imports a concrete provider directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -26,7 +26,7 @@ class ChatResponse:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
-    raw: Optional[Any] = None  # provider-specific raw response, for debugging
+    raw: Any | None = None  # provider-specific raw response, for debugging
 
 
 @dataclass
@@ -36,7 +36,7 @@ class ProviderHealth:
     ok: bool
     model: str
     latency_ms: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @runtime_checkable
@@ -45,17 +45,17 @@ class LLMProvider(Protocol):
 
     async def chat(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1024,
-        extra: Optional[Dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
     ) -> ChatResponse:
         """Send a chat request and return the assistant response."""
         ...
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return embeddings for a list of texts (batch)."""
         ...
 

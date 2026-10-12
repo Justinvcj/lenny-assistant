@@ -2,13 +2,11 @@
 
 import inspect
 import logging
-from pathlib import Path
 import time
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import uuid
-
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import Any
 
 from app.config import get_settings
 from app.models import Chunk, Document, utc_now
@@ -20,6 +18,8 @@ from app.rag.parser import (
     is_episode_file,
     parse_transcript_file,
 )
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class IngestionStats:
     pruned_docs: int = 0
     total_chunks: int = 0
     total_tokens: int = 0
-    errors: List[Dict[str, str]] = field(default_factory=list)
+    errors: list[dict[str, str]] = field(default_factory=list)
     start_time: float = 0.0
     end_time: float = 0.0
 
@@ -47,7 +47,7 @@ class IngestionStats:
         return max(0.0, self.end_time - self.start_time)
 
 
-def resolve_data_dir(data_dir_arg: Optional[str] = None) -> Path:
+def resolve_data_dir(data_dir_arg: str | None = None) -> Path:
     """Resolve the transcript directory across Docker container and Windows host environments."""
     settings = get_settings()
 
@@ -116,7 +116,7 @@ async def _get_embeddings_for_chunks(
     chunk_texts: Sequence[str],
     embedder: Any,
     batch_size: int,
-) -> List[List[float]]:
+) -> list[list[float]]:
     if not chunk_texts:
         return []
 
@@ -136,11 +136,11 @@ async def _get_embeddings_for_chunks(
 async def ingest_document(
     file_path: Path | str,
     db: AsyncSession,
-    embedder: Optional[Any] = None,
+    embedder: Any | None = None,
     batch_size: int = 32,
     force: bool = False,
     dry_run: bool = False,
-) -> Tuple[str, int, int]:
+) -> tuple[str, int, int]:
     """Ingest a single transcript file with strict idempotency by content_hash.
 
     Returns:
@@ -169,7 +169,7 @@ async def ingest_document(
 
     # 3. Chunk the parsed document
     target_doc_id = existing_doc.id if existing_doc is not None else uuid.uuid4()
-    chunks: List[ChunkDraft] = chunk_document(parsed, document_id=target_doc_id)
+    chunks: list[ChunkDraft] = chunk_document(parsed, document_id=target_doc_id)
     token_sum = sum(c.token_count or 0 for c in chunks)
 
     # 4. Dry-run mode bypasses embedding and database writes
@@ -216,13 +216,13 @@ async def ingest_document(
 async def ingest_transcripts(
     source_dir: Path | str,
     db: AsyncSession,
-    limit: Optional[int] = None,
-    embedder: Optional[Any] = None,
+    limit: int | None = None,
+    embedder: Any | None = None,
     batch_size: int = 32,
     force: bool = False,
     dry_run: bool = False,
     reset: bool = False,
-    on_progress: Optional[Callable[[int, int, str, str, int], None]] = None,
+    on_progress: Callable[[int, int, str, str, int], None] | None = None,
 ) -> IngestionStats:
     """Ingest all transcript files in source_dir with progress tracking and idempotency."""
     dir_path = Path(source_dir)

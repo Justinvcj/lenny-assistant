@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.errors import AppException
 from app.llm.base import ChatMessage, ChatResponse, ProviderHealth
@@ -33,7 +33,7 @@ class AnthropicProvider:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "claude-3-5-sonnet-20241022",
     ) -> None:
         if not _ANTHROPIC_AVAILABLE or _anthropic is None:
@@ -53,12 +53,12 @@ class AnthropicProvider:
 
     async def chat(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1024,
-        extra: Optional[Dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
     ) -> ChatResponse:
         """Calls Anthropic Messages API, returning standard 502 AppException on misconfiguration or failure."""
         if not self._api_key or self._client is None:
@@ -73,7 +73,7 @@ class AnthropicProvider:
             for m in messages
             if m.role in ("user", "assistant")
         ]
-        kwargs: Dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": max_tokens,
             "messages": api_messages,
@@ -113,7 +113,7 @@ class AnthropicProvider:
                 status_code=status.HTTP_502_BAD_GATEWAY,
             ) from exc
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         """Anthropic does not expose an embeddings API; raise explicitly."""
         raise NotImplementedError(
             "Anthropic does not provide an embedding endpoint. "

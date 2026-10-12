@@ -6,12 +6,9 @@ no claude-agent-sdk, no network required.
 
 from __future__ import annotations
 
-import asyncio
 import pytest
-
 from app.agent.router import Intent
-from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
-
+from app.llm.base import ChatResponse, ProviderHealth
 
 # ---------------------------------------------------------------------------
 # Fake provider
@@ -221,7 +218,7 @@ async def test_run_agent_sdk_timeout_uses_degraded(monkeypatch):
     provider = FakeLLMProvider(reply="Timeout fallback [S1].")
 
     async def mock_sdk_timeout(*args, **kwargs):
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     monkeypatch.setattr(orch_module, "_run_with_sdk", mock_sdk_timeout)
 

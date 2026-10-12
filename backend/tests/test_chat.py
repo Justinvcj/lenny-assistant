@@ -13,22 +13,19 @@ Tests:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
-from app.agent.router import Intent
 from app.db import get_db_session
-from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
+from app.llm.base import ChatMessage, ChatResponse, ProviderHealth
 from app.main import app
 from app.models import Artifact, Message, Session
 from app.rag.retrieval import RetrievalResult
 from app.routers.chat import derive_summary_title, get_chat_embedder, get_chat_provider
-
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Test fixtures & mocks
@@ -43,7 +40,7 @@ def mock_disable_sdk_in_unit_tests():
 
 
 
-def make_mock_db(session_obj: Optional[Session] = None, history: Optional[List[Any]] = None):
+def make_mock_db(session_obj: Session | None = None, history: list[Any] | None = None):
     """Create a mock AsyncSession that returns synchronous Result objects."""
     mock_db = AsyncMock()
     mock_db.add = MagicMock()
@@ -53,16 +50,14 @@ def make_mock_db(session_obj: Optional[Session] = None, history: Optional[List[A
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 
     def execute_side_effect(stmt):
         stmt_str = str(stmt).lower()
         res = MagicMock()
-        if "from sessions" in stmt_str or "sessions.id" in stmt_str:
-            res.scalar_one_or_none.return_value = session_obj
-        elif "from artifacts" in stmt_str or "artifacts.id" in stmt_str:
+        if "from sessions" in stmt_str or "sessions.id" in stmt_str or "from artifacts" in stmt_str or "artifacts.id" in stmt_str:
             res.scalar_one_or_none.return_value = session_obj
         else:
             res.scalars.return_value.all.return_value = history or []
@@ -76,19 +71,19 @@ def make_mock_db(session_obj: Optional[Session] = None, history: Optional[List[A
 class MockLLMProvider:
     """Mock LLMProvider that tracks call count and returns preset responses."""
 
-    def __init__(self, responses: Optional[List[str]] = None):
+    def __init__(self, responses: list[str] | None = None):
         self.responses = responses or ["According to the podcast, retention is key [S1]."]
         self.call_count = 0
-        self.prompts: List[str] = []
+        self.prompts: list[str] = []
 
     async def chat(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1024,
-        extra: Optional[Any] = None,
+        extra: Any | None = None,
     ) -> ChatResponse:
         self.call_count += 1
         prompt_text = messages[-1].content if messages else ""
@@ -103,7 +98,7 @@ class MockLLMProvider:
             model="mock-qwen",
         )
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1] * 768 for _ in texts]
 
     async def health(self) -> ProviderHealth:
@@ -113,10 +108,10 @@ class MockLLMProvider:
 class MockEmbedder:
     """Mock embedder returning deterministic 768-dim vector."""
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         return [0.05] * 768
 
-    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [[0.05] * 768 for _ in texts]
 
 
@@ -217,7 +212,7 @@ def test_immediate_refusal_below_threshold(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_mock_db(session_obj=mock_session_obj)
@@ -271,7 +266,7 @@ def test_grounded_qa_success(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_mock_db(session_obj=mock_session_obj)
@@ -332,7 +327,7 @@ def test_retry_on_missing_citations_succeeds_on_second_turn(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_mock_db(session_obj=mock_session_obj)
@@ -381,7 +376,7 @@ def test_double_failure_falls_back_to_exact_refusal(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_mock_db(session_obj=mock_session_obj)
@@ -455,7 +450,7 @@ def test_get_artifact_success(client):
         type="html",
         title="Retention Framework",
         content="<div>Sample HTML</div>",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_mock_db(session_obj=mock_art)
@@ -494,13 +489,13 @@ def make_dynamic_mock_db(session_obj: Session):
             if not getattr(instance, "id", None):
                 instance.id = uuid.uuid4()
             if not getattr(instance, "created_at", None):
-                instance.created_at = datetime.now(timezone.utc)
+                instance.created_at = datetime.now(UTC)
             messages.append(instance)
         elif isinstance(instance, Artifact):
             if not getattr(instance, "id", None):
                 instance.id = uuid.uuid4()
             if not getattr(instance, "created_at", None):
-                instance.created_at = datetime.now(timezone.utc)
+                instance.created_at = datetime.now(UTC)
             artifacts.append(instance)
 
     mock_db.add = MagicMock(side_effect=fake_add)
@@ -510,7 +505,7 @@ def make_dynamic_mock_db(session_obj: Session):
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 
@@ -593,12 +588,12 @@ def test_find_last_grounded_qa_exchange_walkback():
     """Verify find_last_grounded_qa_exchange walks backward past intermediate artifact turns and elliptical turns."""
     from app.routers.chat import find_last_grounded_qa_exchange
 
-    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-    t1 = datetime(2026, 1, 1, 10, 1, 0, tzinfo=timezone.utc)
-    t2 = datetime(2026, 1, 1, 10, 2, 0, tzinfo=timezone.utc)
-    t3 = datetime(2026, 1, 1, 10, 3, 0, tzinfo=timezone.utc)
-    t4 = datetime(2026, 1, 1, 10, 4, 0, tzinfo=timezone.utc)
-    t5 = datetime(2026, 1, 1, 10, 5, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+    t1 = datetime(2026, 1, 1, 10, 1, 0, tzinfo=UTC)
+    t2 = datetime(2026, 1, 1, 10, 2, 0, tzinfo=UTC)
+    t3 = datetime(2026, 1, 1, 10, 3, 0, tzinfo=UTC)
+    t4 = datetime(2026, 1, 1, 10, 4, 0, tzinfo=UTC)
+    t5 = datetime(2026, 1, 1, 10, 5, 0, tzinfo=UTC)
 
     msg_user_qa = Message(
         id=uuid.uuid4(),
@@ -664,7 +659,7 @@ def test_chained_artifact_requests_retain_original_grounded_title(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = make_dynamic_mock_db(session_obj=mock_session_obj)
@@ -753,7 +748,7 @@ def test_followup_after_out_of_domain_refusal_is_refused(client):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     mock_db = make_dynamic_mock_db(session_obj=mock_session_obj)
 

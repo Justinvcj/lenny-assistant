@@ -1,16 +1,16 @@
 """pgvector-based retrieval for Lenny Growth Assistant."""
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from typing import Any
 
 from app.config import get_settings
 from app.models import Chunk, Document
 from app.rag.embeddings import get_embeddings_client
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 
 @dataclass
@@ -22,20 +22,20 @@ class RetrievalResult:
     score: float
     document_slug: str
     title: str
-    guest: Optional[str]
-    speaker: Optional[str]
-    start_char: Optional[int]
-    end_char: Optional[int]
+    guest: str | None
+    speaker: str | None
+    start_char: int | None
+    end_char: int | None
     chunk_index: int
 
 
 async def retrieve(
     query: str,
     db: AsyncSession,
-    top_k: Optional[int] = None,
-    min_score: Optional[float] = None,
-    embedder: Optional[Any] = None,
-) -> List[RetrievalResult]:
+    top_k: int | None = None,
+    min_score: float | None = None,
+    embedder: Any | None = None,
+) -> list[RetrievalResult]:
     """Retrieve top-k chunks matching query using pgvector cosine similarity.
 
     Args:
@@ -97,7 +97,7 @@ async def retrieve(
     result = await db.execute(stmt)
     rows = result.all()
 
-    results: List[RetrievalResult] = []
+    results: list[RetrievalResult] = []
     for row in rows:
         results.append(
             RetrievalResult(
@@ -119,7 +119,7 @@ async def retrieve(
 
 async def get_chunks_by_ids(
     chunk_ids: Sequence[uuid.UUID], db: AsyncSession
-) -> List[Chunk]:
+) -> list[Chunk]:
     """Fetch Chunk models with their related Document loaded by UUIDs.
 
     Preserves the relative ordering of the input chunk_ids list.
@@ -139,7 +139,7 @@ async def get_chunks_by_ids(
     chunks_found = result.scalars().all()
 
     chunk_map = {c.id: c for c in chunks_found}
-    ordered_chunks: List[Chunk] = []
+    ordered_chunks: list[Chunk] = []
     for cid in chunk_ids:
         if cid in chunk_map and chunk_map[cid] not in ordered_chunks:
             ordered_chunks.append(chunk_map[cid])

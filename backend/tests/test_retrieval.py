@@ -4,8 +4,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from app.models import Chunk, Document
+from app.models import Chunk
 from app.rag.embeddings import FakeEmbeddingsClient
 from app.rag.retrieval import RetrievalResult, get_chunks_by_ids, retrieve
 

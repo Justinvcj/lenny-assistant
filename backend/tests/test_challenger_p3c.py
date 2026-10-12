@@ -11,38 +11,27 @@ Stress-tests:
 5. Ingestion parameter boundaries: limit=0 behavior, malformed files, empty turns.
 """
 
-import hashlib
-from pathlib import Path
-from typing import List, Sequence
-from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from app.config import get_settings
-from app.models import Chunk, Document
-from app.rag.chunking import chunk_document
+from app.models import Chunk
 from app.rag.embeddings import (
     DOCUMENT_PREFIX,
-    QUERY_PREFIX,
     FakeEmbeddingsClient,
     OllamaEmbeddingsClient,
-    apply_prefix,
-    get_embeddings_batch,
-    get_embeddings_batch_async,
 )
 from app.rag.ingest import (
-    IngestionStats,
     ingest_document,
     ingest_transcripts,
 )
 from app.rag.parser import (
     compute_content_hash,
-    parse_transcript_file,
     parse_transcript_text,
 )
-from app.rag.retrieval import RetrievalResult, get_chunks_by_ids, retrieve
-
+from app.rag.retrieval import get_chunks_by_ids, retrieve
 
 # ==============================================================================
 # GROUP 1: RETRIEVE STRESS TESTING
@@ -78,7 +67,7 @@ async def test_retrieve_unicode_and_special_whitespace():
 
     for ws in test_cases:
         res = await retrieve(ws, mock_db, embedder=mock_embedder)
-        assert res == [], f"Expected empty result for whitespace {repr(ws)}"
+        assert res == [], f"Expected empty result for whitespace {ws!r}"
 
     assert mock_db.execute.call_count == 0
     assert mock_embedder.get_query_embedding.call_count == 0
@@ -132,6 +121,7 @@ async def test_retrieve_huge_query_live_ollama():
     import os
     import socket
     from urllib.parse import urlparse
+
     from app.config import get_settings
 
     base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
@@ -427,6 +417,7 @@ def test_batch_embedding_live_ollama_boundaries():
     import os
     import socket
     from urllib.parse import urlparse
+
     from app.config import get_settings
 
     base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
@@ -461,7 +452,7 @@ def test_batch_embedding_sequence_types():
     assert len(tuple_res) == 2
 
     # Generator
-    gen_res = fake.get_embeddings_batch((f"gen {i}" for i in range(5)))
+    gen_res = fake.get_embeddings_batch(f"gen {i}" for i in range(5))
     assert len(gen_res) == 5
 
 

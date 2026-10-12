@@ -6,10 +6,10 @@ distributions, and prints 3 representative sample chunks.
 """
 
 import argparse
-from pathlib import Path
 import statistics
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
 
 # Ensure UTF-8 stdout encoding on Windows
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -24,11 +24,11 @@ backend_dir = current_dir.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.rag.parser import parse_transcript_file  # noqa: E402
-from app.rag.chunking import ChunkDraft, chunk_document  # noqa: E402
+from app.rag.chunking import ChunkDraft, chunk_document
+from app.rag.parser import parse_transcript_file
 
 
-def compute_percentile(sorted_list: List[int], p: float) -> float:
+def compute_percentile(sorted_list: list[int], p: float) -> float:
     """Calculate percentile from a sorted list of numbers."""
     if not sorted_list:
         return 0.0
@@ -42,17 +42,17 @@ def compute_percentile(sorted_list: List[int], p: float) -> float:
 
 def run_corpus_analysis(
     podcasts_dir: Path,
-    update_docs_path: Optional[Path] = None,
-) -> Dict[str, Any]:
+    update_docs_path: Path | None = None,
+) -> dict[str, Any]:
     """Parse and chunk all transcripts, returning structured statistics."""
     md_files = sorted(podcasts_dir.glob("*.md"))
     if not md_files:
         raise FileNotFoundError(f"No .md podcast files found in {podcasts_dir}")
 
     docs = []
-    all_chunks: List[ChunkDraft] = []
-    chunks_per_doc: List[int] = []
-    turns_per_doc: List[int] = []
+    all_chunks: list[ChunkDraft] = []
+    chunks_per_doc: list[int] = []
+    turns_per_doc: list[int] = []
     all_turns_count = 0
     empty_turns_dropped = 0
 
@@ -166,7 +166,7 @@ def run_corpus_analysis(
     return stats
 
 
-def update_data_notes_doc(docs_path: Path, stats: Dict[str, Any]) -> None:
+def update_data_notes_doc(docs_path: Path, stats: dict[str, Any]) -> None:
     """Append or replace Section 7 in docs/DATA_NOTES.md with empirical results."""
     content = docs_path.read_text(encoding="utf-8")
 

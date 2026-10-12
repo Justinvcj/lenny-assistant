@@ -5,15 +5,15 @@ and ordered speaker turns with exact character offsets.
 Supports the ChatPRD corpus (episodes/{slug}/transcript.md) and legacy formats.
 """
 
+import hashlib
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import date
-import hashlib
 from pathlib import Path
-import re
-from typing import Any, Dict, List, Optional
-import uuid
-import yaml
+from typing import Any
 
+import yaml
 from app.models import Document
 
 # Speaker turn patterns
@@ -58,15 +58,15 @@ class ParsedDocument:
 
     slug: str
     title: str
-    guest: Optional[str]
-    published_at: Optional[date]
+    guest: str | None
+    published_at: date | None
     source_path: str
     content_hash: str
-    metadata: Dict[str, Any]
-    turns: List[SpeakerTurn]
+    metadata: dict[str, Any]
+    turns: list[SpeakerTurn]
     raw_text: str
 
-    def to_document_model(self, doc_id: Optional[uuid.UUID] = None) -> Document:
+    def to_document_model(self, doc_id: uuid.UUID | None = None) -> Document:
         """Convert to SQLAlchemy Document model."""
         return Document(
             id=doc_id or uuid.uuid4(),
@@ -93,7 +93,7 @@ def compute_content_hash(content: str | bytes) -> str:
     return hashlib.sha256(normalized).hexdigest()
 
 
-def extract_frontmatter(raw_text: str) -> tuple[Dict[str, Any], int]:
+def extract_frontmatter(raw_text: str) -> tuple[dict[str, Any], int]:
     """Extract YAML frontmatter and character index where body begins.
 
     Returns:
@@ -113,7 +113,7 @@ def extract_frontmatter(raw_text: str) -> tuple[Dict[str, Any], int]:
         return {}, body_start
 
 
-def is_episode_file(path: Path | str, fm: Optional[Dict[str, Any]] = None) -> bool:
+def is_episode_file(path: Path | str, fm: dict[str, Any] | None = None) -> bool:
     """Check whether a markdown file is a genuine podcast episode transcript.
 
     Skips index files, readmes, scripts, and non-episode files like teaser_2021.
@@ -138,8 +138,8 @@ def is_episode_file(path: Path | str, fm: Optional[Dict[str, Any]] = None) -> bo
 
 def derive_slug(
     path: Path | str,
-    fm: Optional[Dict[str, Any]] = None,
-    explicit_slug: Optional[str] = None,
+    fm: dict[str, Any] | None = None,
+    explicit_slug: str | None = None,
 ) -> str:
     """Derive stable, unique slug for an episode.
 
@@ -166,7 +166,7 @@ def extract_speaker_turns(
     body_start: int = 0,
     filter_empty: bool = True,
     normalize_host: bool = True,
-) -> tuple[List[SpeakerTurn], int]:
+) -> tuple[list[SpeakerTurn], int]:
     """Extract ordered speaker turns with verified character offsets.
 
     Supports:
@@ -208,7 +208,7 @@ def extract_speaker_turns(
     else:
         return [], 0
 
-    turns: List[SpeakerTurn] = []
+    turns: list[SpeakerTurn] = []
     dropped_empty = 0
     current_speaker = "Lenny Rachitsky"
 
@@ -268,7 +268,7 @@ def extract_speaker_turns(
 def parse_transcript_text(
     raw_text: str,
     source_path: str = "",
-    slug: Optional[str] = None,
+    slug: str | None = None,
 ) -> ParsedDocument:
     """Parse transcript from in-memory string content."""
     clean_text = raw_text.lstrip("\ufeff")
@@ -286,7 +286,7 @@ def parse_transcript_text(
     title = str(fm.get("title") or derived_slug.replace("-", " ").title())
     guest = fm.get("guest")
 
-    pub_date: Optional[date] = None
+    pub_date: date | None = None
     raw_date = fm.get("publish_date") or fm.get("date")
     if raw_date:
         if isinstance(raw_date, date):
@@ -299,7 +299,7 @@ def parse_transcript_text(
 
     turns, dropped_empty = extract_speaker_turns(clean_text, body_start=body_start)
 
-    metadata: Dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "description": fm.get("description"),
         "word_count": fm.get("word_count"),
         "post_url": fm.get("post_url"),
@@ -334,7 +334,7 @@ def parse_transcript_text(
 def parse_transcript(
     content: str,
     source_path: str = "",
-    slug: Optional[str] = None,
+    slug: str | None = None,
 ) -> ParsedDocument:
     """Alias for parse_transcript_text accepting content= keyword argument."""
     return parse_transcript_text(raw_text=content, source_path=source_path, slug=slug)
@@ -342,8 +342,8 @@ def parse_transcript(
 
 def parse_transcript_file(
     file_path: Path | str,
-    source_path_override: Optional[str] = None,
-    slug: Optional[str] = None,
+    source_path_override: str | None = None,
+    slug: str | None = None,
 ) -> ParsedDocument:
     """Parse transcript from a file path."""
     path = Path(file_path)

@@ -1,327 +1,367 @@
-# The Lenny Growth Assistant
+# Lenny Growth Assistant
 
-A production-grade, domain-specific AI assistant and knowledge engine grounded in transcripts from **Lenny's Podcast** (303 episode files, 302 valid transcripts ingested (one promo teaser excluded), comprising 21,994 pgvector chunks).
+A grounded Q&A and essay-drafting assistant for Lenny Rachitsky's podcast transcripts. The assistant answers from a corpus of 302 podcast episodes (21,994 vector chunks) with numbered-source citations and visible source passages, refuses out-of-scope questions without calling the model, and turns a grounded answer into a Ship-30-style essay or a one-pager artifact rendered in a sandboxed viewer. Local-first (Ollama + qwen2.5:7b) with an optional Anthropic cloud path.
 
-Built for the Forward Deployed Engineer take-home assignment, featuring:
-- **FastAPI** backend with asynchronous request routing, strict validation, and structured telemetry.
-- **PostgreSQL 16 + pgvector** vector storage with cosine similarity search and content-hash idempotency.
-- **Dual Model Architecture**: Native local **Ollama** (`qwen2.5:7b` + `nomic-embed-text`) with zero cloud cost, plus opt-in cloud provider support (**Anthropic Claude 3.5 Sonnet**).
-- **React 18 + Vite** desktop/mobile responsive UI featuring real-time diagnostics, citation chips with verbatim podcast quotes, interactive chat composer, and sandboxed artifact rendering.
-- **One-Command Startup**: Fully dockerized deployment with automated migrations and ingestion pipelines.
+Demo video: *(link added at submission)*
 
 ---
 
-## 1. System Architecture Overview
+## 1. Architecture overview
 
 ```
-                      ┌───────────────────────────────────────┐
-                      │          React 18 Web Client          │
-                      │   (Sidebar / Chat Area / Artifacts)   │
-                      └──────────────────┬────────────────────┘
-                                         │ HTTP / JSON
-                                         ▼
-                      ┌───────────────────────────────────────┐
-                      │          FastAPI Backend Engine       │
-                      │  - Health Diagnostics & Config        │
-                      │  - Session & Metadata Management      │
-                      │  - Deterministic Intent Router        │
-                      └─────────────┬───────────────────┬─────┘
-                                    │                   │
-                  SQLAlchemy / async│                   │ Embeddings / Chat
-                                    ▼                   ▼
-     ┌────────────────────────────────────┐       ┌────────────────────────┐
-     │      PostgreSQL 16 (pgvector)      │       │     Model Providers    │
-     │  - documents & chunks (768-dim)    │       │  - Ollama (Local Host) │
-     │  - sessions (JSONB user_metadata)  │       │    qwen2.5:7b          │
-     │  - messages & artifacts            │       │    nomic-embed-text    │
-     └────────────────────────────────────┘       │  - Anthropic (Cloud)   │
-                                                  └────────────────────────┘
+┌───────────────┐   HTTP/JSON    ┌─────────────────────────┐
+│  React/Vite   │ ─────────────▶ │  FastAPI backend        │
+│  frontend     │ ◀───────────── │  (routers/, agent/,     │
+│  (chat, UI)   │                │   skills/, rag/)        │
+└──────┬────────┘                └──────┬──────────────────┘
+       │                                │
+       │ srcdoc, sandbox=""             │  SQLAlchemy
+       ▼                                ▼
+┌──────────────┐                 ┌──────────────────────┐
+│ Artifact     │                 │ PostgreSQL + pgvector│
+│ viewer       │                 │  (sessions, messages,│
+│ (iframe,     │                 │   docs, chunks)      │
+│  DOMPurify)  │                 └──────────────────────┘
+└──────────────┘                        ▲
+                                        │  REST
+                   ┌────────────────────┴────────────────────┐
+                   │   Ollama (host, native)                 │
+                   │   qwen2.5:7b   +   nomic-embed-text     │
+                   │   or  Anthropic API (optional, UNTESTED)│
+                   └─────────────────────────────────────────┘
 ```
 
----
+Request flow (chat):
 
-## 2. Prerequisites & System Specifications
+1. Frontend POSTs the user message to `/sessions/{id}/messages`.
+2. **Deterministic intent router** classifies QA / ESSAY / ARTIFACT and picks a tool menu (one tool per intent).
+3. For QA, **retrieval runs in code first** (not as a tool call): embed query → pgvector cosine → top-k.
+4. If `top_score < RETRIEVAL_MIN_SCORE`, the backend returns the exact refusal sentence **without calling the LLM**. Short/anaphoric follow-ups to a grounded answer bypass the score gate and merge the previous turn's cited chunks (R1 fix).
+5. Otherwise the backend builds a numbered-sources prompt (`[S1]..[Sn]`), calls the locked-down agent runtime, verifies every `[S#]` tag against the retrieved set, and persists the message + citations.
+6. ESSAY runs the Ship 30 skill (plan → draft → expand → repair → validate). ARTIFACT emits a deterministic HTML or Markdown document from the previous grounded answer (no new LLM call). Both open in the sandboxed viewer.
 
-### Minimum Hardware Specifications
-- **Operating System**: Linux (Ubuntu 22.04+), macOS (13+ Ventura / Apple Silicon), or Windows 10/11 with WSL2 / PowerShell.
-- **CPU**: 4 cores minimum (8 cores recommended for CPU inference).
-- **RAM**: 16 GB minimum (32 GB recommended when running local 7B models with concurrent pgvector queries).
-- **Disk Space**: 15 GB free disk space (Docker container layers, PostgreSQL volume, transcripts, and Ollama model weights).
-- **Software**:
-  - [Docker Engine & Docker Compose v2](https://docs.docker.com/engine/install/)
-  - [Ollama](https://ollama.ai/) (v0.3.0 or later)
-  - Git
+Key design decisions (see `SPEC.md §4` and `spike/SPIKE_LOG.md`):
 
-### Measured First-Run Benchmarks
-Measured on modern workstation (Windows 11 / AMD Ryzen 9 / SSD):
-- **Docker Images Build Time**: 42 seconds (Node 20 multi-stage build + Python 3.11-slim).
-- **Database Initial Migration**: 1.8 seconds (Alembic automatic migration).
-- **Transcript Download (`fetch_data.py`)**: 12.4 seconds (303 episode files, shallow clone).
-- **Full Ingestion Pipeline**: **645.60 seconds (~10 min 45 sec)** with `nomic-embed-text` (batch size: 32) across **303 episode files, 302 valid transcripts ingested (one promo teaser excluded)**.
-- **Corpus Chunk Count**: **21,994 chunks** (verified via `GET /health` reporting `vector_count: 21994`). One file (`episodes/teaser_2021/transcript.md`) is a short promo teaser for "The Room Where It Happens" without episode metadata or speaker turns and is intentionally excluded by the parser.
-- **Subsequent Idempotent Ingestion**: **4.20 seconds** (all 302 documents recognized by content hash and skipped).
-- **Retrieval P95 Latency**: 24 milliseconds for cosine similarity top-6 lookup across 21,994 pgvector rows.
+- **D1 Retrieval runs in code**, not as a tool call. Spike: raw tool-calling skipped the tool 4/4 times on a specific topic.
+- **D2 Tool-menu narrowing**: one tool per intent; the agent sees fewer tools and behaves predictably on a 7B model.
+- **D3 Locked-down agent**: SDK built-in tools (Bash, Read, Write, Edit, WebFetch, ...) all disabled; `cwd` set to an empty temp dir. Spike: dropped prompt size from ~21.7k to 384 tokens.
+- **D4 Grounding protocol**: `[S#]` tags validated server-side; citation list built from the database, never from model text.
+- **D7 Artifacts are untrusted**: viewer iframe uses `sandbox=""` (no `allow-scripts`, no `allow-same-origin`), DOMPurify, inline CSP.
+- **D8 Degraded mode**: on agent-runtime failure, fall back to a direct provider call with the same grounded prompt and set `degraded: true`.
 
-> **Windows Git Bash / MSYS2 Path Conversion Note**:
-> When running Docker Compose or test commands via Git Bash / MSYS2 on Windows, POSIX-style paths such as `/tmp` or `/data` are automatically rewritten into Windows host paths (e.g., `<user home>/AppData/Local/Temp`) by MSYS2 path translation. This causes Docker volume mounts or container-internal test paths to fail. To prevent automatic path conversion, prefix commands with `MSYS_NO_PATHCONV=1` (e.g. `MSYS_NO_PATHCONV=1 docker compose ...`), or run commands from native Windows PowerShell where no POSIX path conversion occurs.
+Details: [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## 3. Local Model Setup (Ollama)
+## 2. Prerequisites
 
-By default, the assistant runs 100% locally using Ollama for both chat completions and embeddings.
+| Requirement | Minimum | Notes |
+|---|---|---|
+| OS | Windows 10/11, macOS 12+, or Linux (x86-64) | — |
+| Docker Desktop | 4.30+ (Linux: Docker Engine 24+ with Compose V2) | For db + backend + frontend. |
+| Ollama | 0.3+ installed on the host | Must be running natively — the backend reaches it via `host.docker.internal:11434`. |
+| RAM | 16 GB | qwen2.5:7b fits in ~5 GB at `num_ctx=4096`. |
+| GPU (optional) | NVIDIA 6 GB VRAM+ | Dramatically faster essays; CPU-only works but is slow. |
+| Git | 2.30+ | — |
+| Free disk space | ~15 GB | ~5 GB model + ~2 GB Postgres volume + corpus. |
 
-### 1. Install & Launch Ollama
-Install Ollama from [ollama.ai](https://ollama.ai). Make sure the daemon is running:
+---
+
+## 3. Installation and quick start
+
+A single `make first-run` does fetch + build + wait-for-health + ingest. On Windows, use the PowerShell path.
+
+### macOS / Linux
+
 ```bash
-ollama serve
-```
+# 1. Clone and enter the repository
+git clone https://github.com/Justinvcj/lenny-assistant.git
+cd lenny-assistant
 
-### 2. Pull Required Models
-Pull the primary reasoning model and the 768-dimensional embedding model:
-```bash
+# 2. Create .env
+cp .env.example .env
+
+# 3. Pull the two Ollama models
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
-```
 
-### 3. Context Length Configuration
-For optimal retrieval processing of multiple transcript passages, configure Ollama with an 8,192 token context window:
-```bash
-# Windows: setx OLLAMA_CONTEXT_LENGTH 8192
-# Linux / macOS: export OLLAMA_CONTEXT_LENGTH=8192
-```
+# 4. Set the Ollama context length (one time)
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve &
 
-> **Why 8192 (and NOT 16384)?**:
-> On consumer GPUs with 6GB VRAM (such as the NVIDIA GeForce RTX 4050 Laptop GPU), `qwen2.5:7b` Q4_K_M model weights consume ~4.7 GB of VRAM. An 8,192 token context window requires ~1.2 GB of VRAM for the KV cache, bringing total GPU memory usage to ~5.9 GB—fitting 100% within VRAM for pure GPU inference. Setting `OLLAMA_CONTEXT_LENGTH=16384` expands the KV cache to ~2.4 GB (~7.1 GB total), exceeding the 6GB VRAM boundary and forcing Ollama to offload model layers from GPU VRAM to CPU and system RAM. This offloading triggers an immediate 5x–10x latency penalty, slowing inference from ~25 tokens/s down to 3–5 tokens/s. Therefore, `8192` is recommended consistently across all platforms.
-
-### 4. Container-to-Host Ollama Networking
-The backend runs containerized while Ollama typically runs directly on the host machine to utilize native GPU hardware acceleration:
-- **Docker Desktop (macOS & Windows)**: The container connects to the host via `http://host.docker.internal:11434`. This is pre-configured out-of-the-box in `docker-compose.yml` (`extra_hosts: ["host.docker.internal:host-gateway"]`).
-- **Linux Docker Engine**: On Linux, Docker containers resolve `host.docker.internal` via the `host-gateway` mapping. In addition, ensure Ollama listens on all host network interfaces:
-  ```bash
-  OLLAMA_HOST=0.0.0.0:11434 ollama serve
-  ```
-  *(Note: Linux host-gateway interface configuration is marked **[UNVERIFIED in this Windows test environment]**).*
-
----
-
-## 4. Cloud Model Setup (Optional Anthropic Claude)
-
-The application supports switching to Anthropic Claude 3.5 Sonnet for cloud-based inference while retaining local pgvector embeddings (`nomic-embed-text`).
-
-### Exact Environment Variables
-To enable Anthropic Claude, configure these exact variables in `.env`:
-```env
-LLM_PROVIDER=anthropic
-LLM_MODEL=claude-3-5-sonnet-20241022
-ANTHROPIC_API_KEY=sk-ant-api03-your-actual-api-key
-```
-
-### Graceful Startup & Error Handling
-- **Graceful Startup**: If `LLM_PROVIDER=anthropic` is set but `ANTHROPIC_API_KEY` is missing, empty, or invalid, the application starts normally without crashing (`AnthropicProvider.__init__` does not raise exceptions).
-- **Diagnostics via `/health`**:
-  - Missing key: `GET /health` returns HTTP 200 with `status: "degraded"` and typed reason `"missing_api_key"` (accessible at `reason` and `provider.reason`).
-  - Invalid key: `GET /health` tests credentials against Anthropic's model API, handles the 401 response cleanly, and returns HTTP 200 with `status: "degraded"` and typed reason `"invalid_api_key"`.
-- **Chat Error Envelope**:
-  - Any chat request (`POST /sessions/{id}/messages`) made with a missing or invalid Anthropic key returns a clean HTTP 502 Bad Gateway response within the standard error envelope:
-    ```json
-    {
-      "error": {
-        "code": "bad_gateway",
-        "message": "Anthropic API key is not configured. Please set ANTHROPIC_API_KEY in environment.",
-        "status_code": 502
-      }
-    }
-    ```
-  - Zero stack traces or internal secrets are leaked in error responses or logs.
-
-### Testing & Evaluation Disclosure
-This cloud provider path is fully implemented, verified with automated unit tests (`backend/tests/test_anthropic_provider.py`, `backend/tests/test_health.py`, `backend/tests/test_llm.py`), and verified through live fault-injection runs (with missing keys and invalid keys returning clean 502 responses). However, in accordance with the zero-cloud-budget constraint of this project, this path is **NOT tested with a valid, paid Anthropic API key**.
-
----
-
-## 5. One-Command Startup (First-Run)
-
-### Linux / macOS (Makefile)
-```bash
+# 5. One-command bring-up: fetches transcripts, builds containers, waits for health, ingests
 make first-run
+
+# 6. Open the app
+#   Frontend: http://localhost:3000
+#   Backend API: http://localhost:8000
+#   API docs: http://localhost:8000/docs
 ```
-This single command:
-1. Creates `.env` from `.env.example` if missing.
-2. Dynamically detects remote default branch and downloads the transcripts repository into `./data/lenny-chatprd`.
-3. Builds and launches `lenny-db`, `lenny-backend`, and `lenny-frontend` containers.
-4. Waits for the backend and database health check to report healthy.
-5. Ingests all 300+ podcast episodes into PostgreSQL pgvector.
 
 ### Windows (PowerShell)
+
 ```powershell
-.\scripts\first-run.ps1
+# 1. Clone and enter the repository
+git clone https://github.com/Justinvcj/lenny-assistant.git
+cd lenny-assistant
+
+# 2. Create .env
+Copy-Item .env.example .env
+
+# 3. Pull the Ollama models
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+
+# 4. Set context length and start Ollama (new terminal, kept open)
+$env:OLLAMA_CONTEXT_LENGTH="8192"; ollama serve
+
+# 5. First-run (helper script does fetch + build + ingest)
+./scripts/first-run.ps1
+
+# 6. Open http://localhost:3000
 ```
 
-### Manual Step-by-Step Setup
-If you prefer running commands manually without Makefile or PowerShell scripts:
-1. Copy environment variables:
-   ```bash
-   # Windows Command Prompt:
-   copy .env.example .env
-   # Windows PowerShell:
-   Copy-Item .env.example .env
-   # Linux / macOS:
-   cp .env.example .env
-   ```
-2. Pull required Ollama models and set context length:
-   ```bash
-   ollama pull qwen2.5:7b
-   ollama pull nomic-embed-text
-   # Recommended context length (8192 for 100% GPU VRAM fit on 6GB GPUs):
-   # Windows: setx OLLAMA_CONTEXT_LENGTH 8192
-   # Linux / macOS: export OLLAMA_CONTEXT_LENGTH=8192
-   ```
-3. Fetch transcript dataset:
-   ```bash
-   python scripts/fetch_data.py
-   ```
-4. Build and start containers:
-   ```bash
-   docker compose up -d --build
-   ```
-5. Ingest transcript corpus into pgvector:
-   ```bash
-   docker compose exec backend python -m scripts.ingest
-   ```
+If `make` is not available on Windows, run the steps the Makefile runs:
 
-Once completed, open your browser:
-- **Frontend Web UI**: http://localhost:3000
-- **Backend Health Check**: http://localhost:8000/health
-- **Interactive Swagger Docs**: http://localhost:8000/docs
+```powershell
+python scripts/fetch_data.py
+docker compose up -d --build
+# wait until /health returns {"status":"ok"} …
+docker compose exec -T backend python -m scripts.ingest
+```
+
+**Git Bash on Windows note:** paths like `/app/tests` get mangled by MSYS. Prefix the command with `MSYS_NO_PATHCONV=1` when passing absolute container paths to `docker compose exec`.
 
 ---
 
-## 6. Daily Run Commands
+## 4. Environment variables
 
-| Task | Make Target | Direct Command |
-|---|---|---|
-| Start services | `make up` | `docker compose up -d` |
-| Stop services | `make down` | `docker compose down` |
-| View service logs | — | `docker compose logs -f backend` |
-| Re-run ingestion | `make ingest` | `docker compose exec -T backend python -m scripts.ingest` |
-| Run backend tests | `make test-backend` | `docker compose exec -T backend pytest` |
-| Run frontend tests | `make test-frontend` | `cd frontend && npm test` |
+Every variable in `.env.example`:
 
----
-
-## 7. Environment Variables Reference
-
-| Variable | Requirement | Default | Purpose |
+| Variable | Default | Required | Meaning |
 |---|---|---|---|
-| `LLM_PROVIDER` | Required | `ollama` | Selected LLM backend (`ollama` or `anthropic`). |
-| `LLM_MODEL` | Required | `qwen2.5:7b` | Chat model identifier. |
-| `OLLAMA_BASE_URL` | Required (if Ollama) | `http://host.docker.internal:11434` | Ollama service endpoint accessible from container. |
-| `EMBEDDING_MODEL` | Required | `nomic-embed-text` | Embedding model identifier in Ollama. |
-| `EMBEDDING_DIM` | Required | `768` | Vector dimension matching model and pgvector schema. |
-| `DATABASE_URL` | Required | `postgresql+psycopg://postgres:localdev@db:5432/lenny_assistant` | SQLAlchemy async database connection URI. |
-| `ANTHROPIC_API_KEY` | Optional | *(empty)* | Anthropic API key (required only when `LLM_PROVIDER=anthropic`). |
-| `RETRIEVAL_TOP_K` | Optional | `6` | Maximum number of chunks returned per RAG query. |
-| `RETRIEVAL_MIN_SCORE`| Optional | `0.62` | Empirically calibrated cosine similarity threshold. |
-| `HISTORY_TURNS` | Optional | `6` | Conversational history window for query contextualization. |
-| `AGENT_TIMEOUT_S` | Optional | `120` | Maximum agent execution timeout in seconds before degraded fallback. |
-| `ESSAY_TIMEOUT_S` | Optional | `420` | Extended timeout in seconds for multi-section Ship 30 essay generation. |
-| `ARTIFACT_MAX_BYTES`| Optional | `200000` | Security size guard for generated HTML/Markdown artifacts. |
-| `DATA_DIR` | Required | `/data` | Read-only path where transcripts are mounted in container. |
-| `BACKEND_PORT` | Optional | `8000` | Host port mapped to FastAPI backend. |
-| `FRONTEND_PORT` | Optional | `3000` | Host port mapped to React frontend. |
-| `VITE_API_BASE_URL`| Optional | `http://localhost:8000` | API base URL baked into frontend build. |
+| `LLM_PROVIDER` | `ollama` | Yes | `ollama` (local, tested) or `anthropic` (cloud, UNTESTED with a valid key). |
+| `LLM_MODEL` | `qwen2.5:7b` | Yes | For Anthropic, set a current Claude model id (e.g. `claude-sonnet-4-20250514`). |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Yes (Ollama) | How the backend container reaches Ollama. See §6 Linux notes. |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Yes | 768-dim embedding model; must be pulled in Ollama. |
+| `EMBEDDING_DIM` | `768` | Yes | Verified at startup against a live embed call. |
+| `ANTHROPIC_API_KEY` | *(empty)* | Only if `LLM_PROVIDER=anthropic` | Not required for local Ollama. |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:localdev@db:5432/lenny_assistant` | Yes | Throwaway local password. |
+| `RETRIEVAL_TOP_K` | `5` | Yes | Max chunks returned per query. |
+| `RETRIEVAL_MIN_SCORE` | `0.62` | Yes | Cosine floor for answering; below → refusal with zero LLM calls. |
+| `HISTORY_TURNS` | `6` | Yes | Prior turns included in the prompt / rewrite. |
+| `AGENT_TIMEOUT_S` | `120` | Yes | QA agent timeout. |
+| `ARTIFACT_TIMEOUT_S` | `90` | Yes | Deterministic artifact (summary) timeout. |
+| `ESSAY_TIMEOUT_S` | `420` | Yes | Ship 30 essay pipeline timeout. |
+| `ARTIFACT_MAX_BYTES` | `200000` | Yes | Rejected with `artifact_too_large` above this. |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Yes | Comma-separated origins. |
+| `DATA_DIR` | `/data` | Yes | Where the backend reads transcripts (mounted read-only). |
+| `LOG_LEVEL` | `INFO` | No | Standard Python levels. |
+| `BACKEND_PORT` | `8000` | No | Host-side port binding for the backend. |
+| `FRONTEND_PORT` | `3000` | No | Host-side port binding for the frontend. |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | No | Built into the frontend at build time; must point at the exposed backend port. |
 
-*Note: PostgreSQL is **not** published to the host port by default (`127.0.0.1:5432` is commented out) to prevent host port collisions. Backend connects over the internal Docker network.*
-
-### Host Port Configuration
-Host ports are fully configurable via `.env`:
-- `BACKEND_PORT`: Host port mapping for the FastAPI backend (default: `8000`).
-- `FRONTEND_PORT`: Host port mapping for the Vite React frontend (default: `3000`).
-
-To avoid port collisions or manual configuration desynchronization when overriding `BACKEND_PORT`:
-1. `docker-compose.yml` dynamically evaluates `VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}` for both frontend build args and container environment variables. When `BACKEND_PORT` is overridden (e.g. `BACKEND_PORT=8001`), the frontend automatically points to `http://localhost:8001` without requiring manual edits to `VITE_API_BASE_URL`.
-2. `scripts/first-run.ps1` dynamically parses `BACKEND_PORT` and `FRONTEND_PORT` from `.env`, polls `http://localhost:$backendPort/health` during startup, and displays the correct active URLs upon completion.
-3. `Makefile` includes `.env` and exports `BACKEND_PORT` and `FRONTEND_PORT` (defaulting to 8000/3000), ensuring printed endpoints match active host bindings.
+PostgreSQL is **not** published to the host by default; the backend reaches it inside the compose network.
 
 ---
 
-## 8. Fallback Behavior & Degradation Modes
+## 5. Local model setup (Ollama)
 
-The system is strictly designed with predictable degradation and zero silent switching:
+Required models:
 
-1. **System Never Silently Switches Providers**:
-   If `LLM_PROVIDER=ollama` is configured and Ollama fails, the application **never** attempts to silently fallback to Anthropic (which could leak user queries or incur unbudgeted API fees). The system reports `502 Bad Gateway` with error code `llm_unavailable`.
-2. **Ollama Down / Unreachable**:
-   - `/health` endpoint returns HTTP 200 with `status: "degraded"` and `ollama.reachable: false`.
-   - Frontend displays amber warning status dot in the header.
-   - User queries receive a clear, friendly error banner: *"Ollama local LLM is unavailable. Please verify Ollama is running with qwen2.5:7b."*
-3. **Empty Knowledge Base / Ingestion Not Run**:
-   - The backend does **not** crash if the database has 0 chunks.
-   - `/health` explicitly reports `ingested: false`.
-   - The frontend UI displays an informational banner alerting the user that transcripts have not been ingested and provides the exact command (`make ingest`).
-4. **Missing or Invalid Cloud API Key**:
-   - When `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` is empty or invalid, the backend immediately fails fast with a structured validation error `401 Unauthorized` / `invalid_api_key`.
-5. **Model Timeout / Long Inference**:
-   - Configurable timeout via `AGENT_TIMEOUT_S` (default: 120s). If the local model stalls, the request terminates with `504 Gateway Timeout` (`agent_timeout`) and a retry prompt is displayed to the user.
+```bash
+ollama pull qwen2.5:7b          # ~5 GB, chat model
+ollama pull nomic-embed-text    # ~0.3 GB, 768-dim embeddings
+```
 
----
+Verify models are loaded on the GPU (if present):
 
-## 9. Troubleshooting Guide
+```bash
+ollama ps
+# Expect to see qwen2.5:7b with GPU% > 0 while a chat is in flight.
+```
 
-### 1. `Cannot connect to Ollama at http://host.docker.internal:11434`
-- **Cause**: Ollama is not running on host or Docker cannot reach host IP.
-- **Fix**:
-  1. Verify Ollama is running: run `ollama list` in host terminal.
-  2. If on Linux, ensure Ollama is listening on all interfaces: `OLLAMA_HOST=0.0.0.0:11434 ollama serve`.
-  3. Verify `curl http://localhost:11434/api/tags` returns HTTP 200 from host.
+How containers reach Ollama:
 
-### 2. `Embedding model 'nomic-embed-text' not found`
-- **Cause**: The embedding model was not pulled before ingestion.
-- **Fix**: Run `ollama pull nomic-embed-text` on the host, then run `make ingest`.
+- **Docker Desktop (Windows, macOS):** `OLLAMA_BASE_URL=http://host.docker.internal:11434`. The compose file declares `extra_hosts: - "host.docker.internal:host-gateway"` so the backend container resolves it.
+- **Linux without Docker Desktop:** the same `extra_hosts` entry is active and routes to the host gateway. If it fails, set `OLLAMA_HOST=0.0.0.0:11434` on the host before `ollama serve` so Ollama listens on all interfaces, and keep `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env`. **UNVERIFIED on Linux** — only Docker Desktop (Windows) was exercised in this project.
 
-### 3. Port Conflicts (`8000` or `3000` already in use)
-- **Cause**: Another local service is using port 8000 or 3000.
-- **Fix**: Update `BACKEND_PORT=8001` or `FRONTEND_PORT=3001` in `.env` and rerun `docker compose up -d`. `docker-compose.yml` automatically forwards the new backend port to `VITE_API_BASE_URL` without requiring manual frontend changes.
+Context length (one-time environment setting that affects every Ollama session):
 
-### 4. Database Connection Refused
-- **Cause**: `lenny-db` container is still initializing or volume permissions error.
-- **Fix**: Check `docker compose logs db`. Ensure healthy status via `docker compose ps`.
+```bash
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
+The default `num_ctx` of 4096 truncates the grounded prompt on long essay runs; 8192 keeps the full sources block.
 
 ---
 
-## 10. Documentation & Deliverables
+## 6. Cloud model setup (Anthropic)
 
-All core architectural, security, and project specifications live under `docs/` and `playbook/`:
+The `anthropic` provider path is **implemented and error-handled but NOT tested with a valid key**.
 
-| Document | Purpose |
+To switch:
+
+```bash
+# .env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514   # or any current Claude model id
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Typed errors (never a silent switch to local):
+
+- **Missing key**: `/health` reports `provider.ok=false, provider.reason="missing_api_key"`. Chat requests return `502 {"error":{"code":"bad_gateway","message":"Anthropic API key is not configured ..."}}`.
+- **Invalid key**: `/health` reports `provider.ok=false, provider.reason="invalid_api_key"` after a 401 from the API. Chat requests return `502 {"error":{"code":"llm_unavailable", ...}}`.
+- **Transport failure**: wrapped the same way.
+
+See `backend/app/llm/anthropic_provider.py`.
+
+---
+
+## 7. Run commands
+
+| Command | What it prints / does |
 |---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Product Requirements Document, user journeys, assumptions, and out-of-scope boundaries. |
-| [`docs/architecture.md`](docs/architecture.md) | Technical architecture, database schema, API contracts, deterministic router, and fallback matrices. |
-| [`docs/design.md`](docs/design.md) | UI/UX design specification, design tokens, Information Architecture, and Design Decisions table. |
-| [`docs/security.md`](docs/security.md) | Threat model (T1–T12), sandboxed iframe CSP specification, input sanitization, and prompt injection defense. |
-| [`docs/DATA_NOTES.md`](docs/DATA_NOTES.md) | Transcript corpus audit, schema inspection, speaker-turn parsing rules, and retrieval calibration. |
-| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Automated test strategy and manual browser-based verification checklist (M1–M11). |
-| [`docs/BRIEF_COMPLIANCE.md`](docs/BRIEF_COMPLIANCE.md) | Exhaustive compliance matrix auditing every brief requirement with empirical evidence and known gaps. |
-| [`transcripts/README.md`](transcripts/README.md) | Index of real agent execution transcripts, failed spikes, diagnostic traces, and codebase fixes. |
-| [`playbook/START_HERE.md`](playbook/START_HERE.md) | Candidate implementation playbook and step-by-step developer guidelines. |
-| [`playbook/PROMPTS.md`](playbook/PROMPTS.md) | Complete sequential engineering prompts and verification recipes (P1–P13). |
+| `make first-run` | Fetches data, `docker compose up -d --build`, polls `/health`, runs ingestion. Prints "First-run setup complete!" and the three URLs. |
+| `make up` | `docker compose up -d`. Starts all services detached. |
+| `make down` | `docker compose down`. Stops containers (volumes preserved). |
+| `make fetch-data` | Runs `scripts/fetch_data.py` which clones the transcripts repo into `./data/`. |
+| `make ingest` | `docker compose exec -T backend python -m scripts.ingest`. Parses → chunks → embeds → stores (content-hash idempotent). |
+| `docker compose exec -T backend python -m scripts.ingest --reset` | Clears existing docs/chunks before re-ingesting. |
+| `docker compose logs -f backend` | Tails backend logs (structured JSON). |
+| `curl http://localhost:8000/health` | Prints `{"status":"ok", "database":..., "provider":..., "ollama":...}`. |
+| `make test-backend` | `docker compose exec -T backend pytest`. |
+| `make test-frontend` | `cd frontend && npm test`. |
+
+Verified cheaply with `make -n first-run` and `docker compose config`.
 
 ---
 
-## 11. Known Limitations and Technical Debt
+## 8. How it works
 
-1. **Module File Sizes (`chat.py` & `verify.py`)**:
-   - `backend/app/routers/chat.py` (956 lines) and `backend/app/agent/verify.py` (865 lines) exceed the ~300-line general guideline in `SPEC.md`.
-   - **Rationale**: Kept intentionally cohesive to ensure the end-to-end multi-turn conversation lifecycle (intent classification, query rewriting, retrieval gating, SDK orchestration, citation verification, and DB persistence) and the citation verification/repair engine remain traceable within unified domains rather than artificially fragmented across multiple shallow files.
-2. **Essay Generation Latency on 6GB GPUs**:
-   - Generating a full Ship 30 essay using the local `qwen2.5:7b` model on a 6GB GPU (RTX 4050) takes between **120 and 250 seconds** due to generating five sequential sections (headline, lead-in, core tenets, counter-intuitive insight, and conclusion) with local FP16/Q4 compute limits. The timeout is explicitly governed by `ESSAY_TIMEOUT_S=420` in `.env`.
-3. **Cloud Provider Testing with Live API Key**:
-   - The `AnthropicProvider` (Claude 3.5 Sonnet) is fully implemented and validated with automated unit tests (`backend/tests/test_anthropic_provider.py`) and live fault injection (testing graceful startup and clean HTTP 502 responses with missing and invalid keys). However, due to the strict zero-cloud-budget constraint of this project, it has not been tested with an active paid Anthropic API key.
-4. **7B Local Model Faithfulness Mitigations**:
-   - Small local 7B models can occasionally reverse causal statements (e.g., claiming retention drives activation instead of activation driving retention) or hallucinate citations if asked open-ended questions.
-   - **Mitigations Employed**:
-     - Pre-retrieval cosine similarity gating (`RETRIEVAL_MIN_SCORE=0.62` floor) to return immediate canonical refusal with 0 LLM calls on out-of-domain queries.
-     - Directional system prompts enforcing anti-reversal constraints ("state relationships exactly as the source states them") and mandatory `[S#]` claim tags.
-     - Automated citation verification (`verify.py`) cross-referencing `[S#]` tags against database chunk rows, stripping invalid citations, and triggering automatic retry if zero valid citations are found.
+- **Ingestion & chunking** (`backend/app/rag/ingest.py`, `chunking.py`): parses the transcript markdown, splits into overlapping chunks around speaker boundaries, embeds each chunk with Ollama's `nomic-embed-text`, stores in pgvector. Content-hash idempotent.
+- **Retrieval & citations** (`backend/app/rag/retrieval.py`, `agent/verify.py`): cosine similarity, top-k, threshold gate. Citation list is built from the database rows the model's `[S#]` tags resolve to — not from model text.
+- **Agent routing & tool narrowing** (`backend/app/agent/router.py`, `tools.py`, `orchestrator.py`): deterministic rule-based router picks QA / ESSAY / ARTIFACT and the one tool for that intent. All built-in SDK tools disabled.
+- **Ship 30 skill** (`backend/app/skills/ship30.py`, `validator.py`, `ship30_rules.yaml`): plan outline → draft each section → up to 2 expansion passes (unused sources only) → repair pass → trim pass. Canonical body length 1,100–1,400 words; `review_floor` 1,000; `trim_target` 1,350. Validator enforces length, hook, structure, specific headings, section budgets, no-duplicate paragraphs, `[S#]`-only citations, formatting, takeaway, citation coverage, and groundedness (sentence support, verbatim quotes, speaker names).
+- **Artifact generation** (`backend/app/routers/chat.py` → `generate_deterministic_html_summary` / `_markdown_summary`): no LLM call — converts the prior grounded answer to a tokenized Markdown → HTML pipeline, inlines citation `<sup><a>` anchors, lists sources with passages, inline CSS. Viewer renders in an iframe with `sandbox=""` (no scripts, no same-origin), DOMPurify-sanitized, inline CSP in the srcdoc.
+- **Fallback behaviour** (`SPEC.md §4 D8`, `docs/architecture.md §10`):
+  - Agent runtime timeout → direct provider call with the same grounded prompt, response flagged `degraded: true`.
+  - Ollama unreachable → `/health` reports `degraded`, chat requests return `502 llm_unavailable`.
+  - Postgres down → `/health` reports `degraded, database_down`, mutating requests return `503 db_unavailable`.
+  - Anthropic key missing/invalid → `502 bad_gateway` or `502 llm_unavailable`.
+  - Retrieval empty / below threshold → the exact refusal sentence, zero LLM calls, logged with `action: refusal_below_retrieval_threshold`.
+  - **Never a silent switch from local to cloud**: the configured provider is used until the user changes `LLM_PROVIDER`.
 
+More: [docs/architecture.md](docs/architecture.md), [docs/security.md](docs/security.md).
+
+---
+
+## 9. Tests
+
+Backend (510 tests at the last full run, 0 failures, 0 skipped):
+
+```bash
+# All backend tests
+docker compose exec -T backend pytest
+
+# Only tests that don't need Ollama (skips the live follow-up audit)
+docker compose exec -T backend pytest --ignore=tests/test_followup_audit.py --ignore=tests/test_sdk_live.py
+```
+
+Coverage: chat router, retrieval, chunking, parsers, agent orchestrator, intent router, Ship 30 skill (planning, drafting, expansion, repair, validator rules), citation verifier, artifact routes, LLM providers (ollama + anthropic), health probes, error envelopes, DB persistence.
+
+Frontend (235 tests at the last full run, 0 failures):
+
+```bash
+cd frontend && npm test
+# or:
+cd frontend && npx vitest run
+```
+
+Coverage: artifact sanitization, iframe rendering, session persistence/switching, chat composer, model badge, loading/error states, API retry.
+
+Manual UI test plan: [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
+
+Evaluation scripts (not run on every build; require ingestion + Ollama up):
+
+- `backend/scripts/eval_e2e.py`
+- `backend/scripts/evaluate_retrieval.py`
+- `backend/scripts/evaluate_retrieval_threshold.py`
+- `backend/scripts/corpus_stats.py`
+
+---
+
+## 10. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `/health` shows `provider.ok=false, reason="ollama_unreachable"` | Ollama not running on the host, or `host.docker.internal` doesn't resolve. | `ollama serve` on the host; on Linux ensure the `extra_hosts: host.docker.internal:host-gateway` entry resolves (otherwise set `OLLAMA_HOST=0.0.0.0`). |
+| `/health` shows `llm_model_present=false` | Model not pulled. | `ollama pull qwen2.5:7b && ollama pull nomic-embed-text`. |
+| Essays taking 3–5 min with GPU idle | Model spilled to CPU. | `ollama ps` to confirm; close other GPU apps or raise `OLLAMA_CONTEXT_LENGTH` and `num_gpu`. |
+| `Error starting userland proxy ... bind: address already in use` | Port 8000 or 3000 is taken. | Change `BACKEND_PORT` / `FRONTEND_PORT` in `.env` (and `VITE_API_BASE_URL`), then rebuild. |
+| Chat always refuses, retrieval scores near 0 | Ingestion hasn't run. | `make ingest`; then verify `/health` shows `vector_count > 0`. |
+| Backend fails to start with CRLF errors on `entrypoint.sh` | Windows CRLF line endings committed into a shell script. | `.gitattributes` enforces LF for `*.sh`; re-clone or `git add --renormalize .`. |
+| `docker compose exec /app/tests ... No such file or directory` | Git Bash converted the absolute container path. | Prefix with `MSYS_NO_PATHCONV=1`. |
+| Frontend shows "Network error" | `VITE_API_BASE_URL` points at the wrong port, or `BACKEND_PORT` changed after frontend build. | Rebuild the frontend after changing `.env` (`docker compose up -d --build frontend`). |
+| `503 db_unavailable` on every request | Postgres container not yet healthy. | Wait a few seconds, or `docker compose logs db`; `make first-run` already waits. |
+| Essays below the 1,100-word floor marked "Needs review" | Model drafted below floor and 2 expansion passes found no unused supported passages. | Expected behavior; see Known limitations. |
+
+---
+
+## 11. Project structure
+
+```
+.
+├── README.md                 # This file
+├── SPEC.md                   # Source-of-truth design decisions
+├── CLAUDE.md / AGENTS.md     # Session rules for the authoring assistants
+├── Makefile                  # first-run / up / down / ingest / tests
+├── docker-compose.yml        # db (pgvector), backend, frontend, optional ollama profile
+├── .env.example              # All environment variables
+├── backend/                  # FastAPI + SQLAlchemy + Alembic + Ship 30 skill
+│   ├── app/
+│   │   ├── routers/          # chat, sessions, artifacts, health, client_events
+│   │   ├── agent/            # orchestrator, prompts, tools, router, verify
+│   │   ├── rag/              # ingest, chunking, embeddings, retrieval, parser
+│   │   ├── skills/           # ship30.py, validator.py, ship30_rules.yaml
+│   │   └── llm/              # ollama_provider, anthropic_provider, factory
+│   ├── scripts/              # ingest, evaluators, corpus stats
+│   └── tests/                # 510 pytest cases
+├── frontend/                 # React + Vite + TypeScript + vitest (235 tests)
+├── docs/                     # PRD, architecture, design, security, TEST_PLAN, FIX_LOG
+├── scripts/                  # fetch_data.py, first-run.ps1, eval helpers
+├── spike/                    # Measured discovery evidence (SPIKE_LOG.md)
+└── transcripts/              # Agent transcripts (process/ holds the implementation playbook)
+```
+
+Docs index:
+
+| File | What it covers |
+|---|---|
+| [`docs/PRD.md`](docs/PRD.md) | User, metrics, assumptions, risks, scope, acceptance table, Known limitations. |
+| [`docs/architecture.md`](docs/architecture.md) | System overview, request flow, data model, API, fallback matrix. |
+| [`docs/design.md`](docs/design.md) | UI/UX design decisions. |
+| [`docs/security.md`](docs/security.md) | Threat model, iframe sandbox, prompt injection, secrets. |
+| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Manual UI test plan. |
+| [`docs/FIX_LOG.md`](docs/FIX_LOG.md) | Chronological audit + fix log. |
+| [`docs/AUDIT_FINAL.md`](docs/AUDIT_FINAL.md) | Independent audit report. |
+| [`transcripts/process/`](transcripts/process/) | Candidate implementation playbook (START_HERE, WORK_SPLIT, PROMPTS). |
+
+---
+
+## 12. Known limitations and technical debt
+
+Taken from [docs/PRD.md §9](docs/PRD.md).
+
+- **Essay heading quality**: when a drafted body section's first sentence has no `[S#]` tag, `derive_heading_from_section` returns empty and the plan's placeholder "Angle N on …" title persists. Validator's `R_SPECIFIC_HEADINGS` flags it but no runtime remediation retries derivation. Both RUN3 live essays failed this rule.
+- **Essay support score below target**: Flow 2 (PLG + Elena Verna) 12.5%, Flow 3 (pricing) 18.5% versus a 70% target. Sentences carry correct `[S#]` tags but the sentence-level overlap check marks most as paraphrased.
+- **Short follow-ups partially met**: ~2 of 6 live Q2 "Why is that?" turns refuse after passing the score-gate bypass because the model/verifier chooses to refuse. Allowed by spec but visible as a refusal.
+- **File sizes not split**: `backend/app/routers/chat.py` (~1,250 lines) and `backend/app/agent/verify.py` (~720 lines) grew during the fix passes and were intentionally not refactored to avoid late regressions. `SPEC.md §6` lists this as an accepted cohesion exception.
+- **Anthropic provider UNTESTED with a valid key**: implemented, surfaces typed health errors and wraps API failures as 502, but no run with a real key was performed.
+- **Trim path not re-exercised live**: `trim_essay_sections` has unit coverage but was not triggered live (no essay exceeded 1,400 words in RUN3).
+
+---
+
+## 13. Data notice
+
+The podcast transcripts come from <https://github.com/ChatPRD/lennys-podcast-transcripts>, provided for personal and educational use per that repository. **This repository does not redistribute them.** `scripts/fetch_data.py` clones the upstream repo into `./data/` on first-run; `./data/` is gitignored. Please review the upstream repository's terms before use.

@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
-
 from app.config import get_settings
-from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
+from app.llm.base import ChatMessage, ChatResponse, ProviderHealth
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +29,8 @@ class OllamaProvider:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
+        base_url: str | None = None,
+        model: str | None = None,
         timeout: int = 120,
     ) -> None:
         settings = get_settings()
@@ -45,15 +44,15 @@ class OllamaProvider:
     # ------------------------------------------------------------------
     async def chat(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1024,
-        extra: Optional[Dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
     ) -> ChatResponse:
         """Send a chat request to Ollama /api/chat."""
-        payload_messages: List[Dict[str, str]] = []
+        payload_messages: list[dict[str, str]] = []
 
         if system:
             payload_messages.append({"role": "system", "content": system})
@@ -63,7 +62,7 @@ class OllamaProvider:
                 {"role": _ROLE_MAP.get(m.role, m.role), "content": m.content}
             )
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": self._model,
             "messages": payload_messages,
             "stream": False,
@@ -95,7 +94,7 @@ class OllamaProvider:
     # ------------------------------------------------------------------
     # embed()
     # ------------------------------------------------------------------
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return embeddings via Ollama /api/embed (batch call)."""
         if not texts:
             return []

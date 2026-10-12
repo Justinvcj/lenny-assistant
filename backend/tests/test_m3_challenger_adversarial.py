@@ -1,11 +1,11 @@
 import re
+
 import pytest
 from app.routers.chat import (
     clean_html_asterisks,
     generate_deterministic_html_summary,
     generate_deterministic_markdown_summary,
 )
-
 
 # ============================================================================
 # R3: Artifact Title XSS Sanitization (Adversarial Stress Suite)

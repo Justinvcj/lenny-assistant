@@ -5,10 +5,9 @@ sentence boundary preservation, primary speaker detection, and exact
 character offset tracking.
 """
 
-from dataclasses import dataclass, field
 import re
-from typing import Dict, List, Optional
 import uuid
+from dataclasses import dataclass, field
 
 from app.models import Chunk
 from app.rag.parser import ParsedDocument, SpeakerTurn
@@ -38,14 +37,14 @@ class ChunkDraft:
     speaker: str
     start_char: int
     end_char: int
-    document_id: Optional[uuid.UUID] = None
-    turns: List[SpeakerTurn] = field(default_factory=list)
+    document_id: uuid.UUID | None = None
+    turns: list[SpeakerTurn] = field(default_factory=list)
 
     def to_chunk_model(
         self,
-        document_id: Optional[uuid.UUID] = None,
-        embedding: Optional[List[float]] = None,
-        chunk_id: Optional[uuid.UUID] = None,
+        document_id: uuid.UUID | None = None,
+        embedding: list[float] | None = None,
+        chunk_id: uuid.UUID | None = None,
     ) -> Chunk:
         """Convert ChunkDraft to SQLAlchemy Chunk model."""
         target_doc_id = document_id or self.document_id
@@ -84,7 +83,7 @@ def estimate_tokens(text: str) -> int:
     return int(round(words * 1.3))
 
 
-def split_sentences(text: str) -> List[str]:
+def split_sentences(text: str) -> list[str]:
     """Split text into sentences while protecting abbreviations and honorifics.
 
     Args:
@@ -99,14 +98,14 @@ def split_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
-def _subdivide_oversized_sentence(sent: str, max_tokens: int = 400) -> List[str]:
+def _subdivide_oversized_sentence(sent: str, max_tokens: int = 400) -> list[str]:
     """Subdivide an unpunctuated run-on sentence exceeding max_tokens into word slices."""
     words_matches = list(re.finditer(r"\S+", sent))
     target_words = max(50, int(max_tokens / 1.3))
     if len(words_matches) <= target_words:
         return [sent]
 
-    fragments: List[str] = []
+    fragments: list[str] = []
     for i in range(0, len(words_matches), target_words):
         chunk_matches = words_matches[i : i + target_words]
         frag_start = chunk_matches[0].start()
@@ -115,7 +114,7 @@ def _subdivide_oversized_sentence(sent: str, max_tokens: int = 400) -> List[str]
     return fragments
 
 
-def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTurn]:
+def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> list[SpeakerTurn]:
     """Split a single speaker turn exceeding the target token limit into sub-turns.
 
     Preserves sentence boundaries and computes exact character offsets within the turn.
@@ -132,7 +131,7 @@ def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTur
         return []
 
     # Flatten run-on sentences if any individual sentence exceeds max_tokens
-    sentences: List[str] = []
+    sentences: list[str] = []
     for s in raw_sentences:
         if estimate_tokens(s) > max_tokens:
             sentences.extend(_subdivide_oversized_sentence(s, max_tokens=max_tokens))
@@ -150,7 +149,7 @@ def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTur
         sentence_spans.append((s, s_start, s_end))
         search_pos = s_end
 
-    sub_turns: List[SpeakerTurn] = []
+    sub_turns: list[SpeakerTurn] = []
     curr_spans = []
     curr_tokens = 0
 
@@ -200,7 +199,7 @@ def split_long_turn(turn: SpeakerTurn, max_tokens: int = 400) -> List[SpeakerTur
     return sub_turns
 
 
-def format_chunk_text(turns: List[SpeakerTurn]) -> str:
+def format_chunk_text(turns: list[SpeakerTurn]) -> str:
     """Format dialogue turns into a consistent chunk text string with speaker headers.
 
     Args:
@@ -209,7 +208,7 @@ def format_chunk_text(turns: List[SpeakerTurn]) -> str:
     Returns:
         Formatted multi-turn markdown dialogue.
     """
-    formatted_parts: List[str] = []
+    formatted_parts: list[str] = []
     for turn in turns:
         if turn.timestamp:
             header = f"**{turn.speaker}** ({turn.timestamp}):"
@@ -219,7 +218,7 @@ def format_chunk_text(turns: List[SpeakerTurn]) -> str:
     return "\n\n".join(formatted_parts)
 
 
-def determine_primary_speaker(turns: List[SpeakerTurn]) -> str:
+def determine_primary_speaker(turns: list[SpeakerTurn]) -> str:
     """Identify the primary speaker in a chunk based on total spoken tokens.
 
     Args:
@@ -228,7 +227,7 @@ def determine_primary_speaker(turns: List[SpeakerTurn]) -> str:
     Returns:
         Speaker name who contributed the most tokens to this chunk.
     """
-    speaker_tokens: Dict[str, int] = {}
+    speaker_tokens: dict[str, int] = {}
     for turn in turns:
         tokens = estimate_tokens(turn.text)
         speaker_tokens[turn.speaker] = speaker_tokens.get(turn.speaker, 0) + tokens
@@ -238,12 +237,12 @@ def determine_primary_speaker(turns: List[SpeakerTurn]) -> str:
 
 
 def chunk_turns(
-    turns: List[SpeakerTurn],
-    document_id: Optional[uuid.UUID] = None,
+    turns: list[SpeakerTurn],
+    document_id: uuid.UUID | None = None,
     min_tokens: int = 350,
     max_tokens: int = 450,
-    target_tokens: Optional[int] = None,
-) -> List[ChunkDraft]:
+    target_tokens: int | None = None,
+) -> list[ChunkDraft]:
     """Chunk a sequence of speaker turns into overlapping, speaker-turn aware chunks.
 
     Maintains strict 1-turn overlap across all adjacent chunk pairs, eliminates
@@ -272,7 +271,7 @@ def chunk_turns(
     turn_split_threshold = int(min_tokens * 0.85)  # e.g., ~297 tokens for min_tokens=350
     subturn_max = int(target_tokens * 0.62)        # e.g., ~248 tokens for target_tokens=400
 
-    normalized_turns: List[SpeakerTurn] = []
+    normalized_turns: list[SpeakerTurn] = []
     for turn in valid_turns:
         turn_tokens = estimate_tokens(turn.text)
         if turn_tokens > turn_split_threshold:
@@ -280,7 +279,7 @@ def chunk_turns(
         else:
             normalized_turns.append(turn)
 
-    chunks: List[ChunkDraft] = []
+    chunks: list[ChunkDraft] = []
     i = 0
     n = len(normalized_turns)
 
@@ -357,7 +356,7 @@ def chunk_turns(
         i = chunk_end
 
     # Step 5: Defense-in-depth filter for any redundant subset chunks
-    pruned_chunks: List[ChunkDraft] = []
+    pruned_chunks: list[ChunkDraft] = []
     for c in chunks:
         if pruned_chunks:
             prev_turn_starts = set(t.start_char for t in pruned_chunks[-1].turns)
@@ -374,10 +373,10 @@ def chunk_turns(
 
 def chunk_document(
     doc: ParsedDocument,
-    document_id: Optional[uuid.UUID] = None,
+    document_id: uuid.UUID | None = None,
     min_tokens: int = 350,
     max_tokens: int = 450,
-) -> List[ChunkDraft]:
+) -> list[ChunkDraft]:
     """Convenience wrapper to chunk a ParsedDocument."""
     return chunk_turns(
         turns=doc.turns,
@@ -389,10 +388,10 @@ def chunk_document(
 
 def chunk_transcript(
     doc: ParsedDocument,
-    document_id: Optional[uuid.UUID] = None,
+    document_id: uuid.UUID | None = None,
     target_min: int = 350,
     target_max: int = 450,
-) -> List[ChunkDraft]:
+) -> list[ChunkDraft]:
     """Alias for chunk_document supporting target_min/target_max parameter names."""
     return chunk_turns(
         turns=doc.turns,

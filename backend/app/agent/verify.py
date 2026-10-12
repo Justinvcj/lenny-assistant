@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from pydantic import BaseModel, Field
+from typing import Any
 
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
-from app.rag.retrieval import RetrievalResult
 from app.schemas import CitationItem
+from pydantic import BaseModel, Field
 
 # Canonical refusal sentence per SPEC and PROMPTS.md
 EXACT_REFUSAL_SENTENCE = EXACT_REFUSAL_MESSAGE
@@ -35,15 +35,15 @@ class VerificationResult(BaseModel):
         ...,
         description="Assistant response text with invalid citation tags stripped.",
     )
-    citations: List[CitationItem] = Field(
+    citations: list[CitationItem] = Field(
         default_factory=list,
         description="Ordered, deduplicated CitationItem list resolved from sources.",
     )
-    valid_tags: List[int] = Field(
+    valid_tags: list[int] = Field(
         default_factory=list,
         description="Source numbers found in text that mapped to valid retrieved sources.",
     )
-    invalid_tags: List[int] = Field(
+    invalid_tags: list[int] = Field(
         default_factory=list,
         description="Out-of-bounds or invalid source numbers found in text.",
     )
@@ -55,17 +55,17 @@ class VerificationResult(BaseModel):
         default=False,
         description="True if a non-refusal answer contains zero valid citations or unsupported names.",
     )
-    unsupported_names: List[str] = Field(
+    unsupported_names: list[str] = Field(
         default_factory=list,
         description="Names of guests mentioned in the answer not supported by cited sources.",
     )
-    warnings: List[str] = Field(
+    warnings: list[str] = Field(
         default_factory=list,
         description="User-facing warnings (e.g. mentions name not in cited transcripts).",
     )
 
 
-def extract_citation_tags(text: str) -> List[int]:
+def extract_citation_tags(text: str) -> list[int]:
     """Extract all [S#] tag numbers from response text in order of appearance.
 
     Supports:
@@ -74,7 +74,7 @@ def extract_citation_tags(text: str) -> List[int]:
     - Adjacent brackets: [S1][S2]
     - Ignores non-source brackets: [2024], [Appendix], [SX], [S]
     """
-    tags: List[int] = []
+    tags: list[int] = []
     if not text:
         return tags
 
@@ -100,7 +100,7 @@ def is_refusal_response(text: str) -> bool:
     return normalized == canonical_normalized
 
 
-def strip_invalid_tags(text: str, valid_tag_set: Set[int]) -> str:
+def strip_invalid_tags(text: str, valid_tag_set: set[int]) -> str:
     """Remove out-of-bounds [S#] tags from text while preserving valid tags.
 
     Normalizes resulting double spaces and punctuation spacing.
@@ -130,14 +130,14 @@ def strip_invalid_tags(text: str, valid_tag_set: Set[int]) -> str:
 def resolve_citations(
     valid_tags: Sequence[int],
     sources: Sequence[Any],
-) -> List[CitationItem]:
+) -> list[CitationItem]:
     """Resolve CitationItem models from retrieved sources matching valid tags.
 
     Deduplicates citations while preserving order of first appearance.
     NEVER fabricates metadata from model text.
     """
-    citations: List[CitationItem] = []
-    seen_tags: Set[int] = set()
+    citations: list[CitationItem] = []
+    seen_tags: set[int] = set()
 
     for tag in valid_tags:
         if tag in seen_tags:
@@ -185,7 +185,7 @@ def resolve_citations(
 
 HOST_NAMES = {"lenny", "lenny rachitsky", "rachitsky"}
 
-KNOWN_GUEST_ROSTER: Set[str] = {
+KNOWN_GUEST_ROSTER: set[str] = {
     "Ada Chen Rekhi", "Adam Fishman", "Adam Grenier", "Adriel Frederick",
     "Aishwarya Naresh Reganti", "Kiriti Badam", "Albert Cheng", "Alexander Embiricos",
     "Alex Hardimen", "Alex Komoroske", "Alisa Cohn", "Ami Vora", "Amjad Masad",
@@ -248,18 +248,18 @@ KNOWN_GUEST_ROSTER: Set[str] = {
     "Will Larson", "Yuhki Yamashata", "Yuriy Timen", "Zoelle Egner",
 }
 
-_DYNAMIC_GUEST_ROSTER: Optional[Set[str]] = None
+_DYNAMIC_GUEST_ROSTER: set[str] | None = None
 
 
-async def load_guest_roster(db: Optional[Any] = None) -> Set[str]:
+async def load_guest_roster(db: Any | None = None) -> set[str]:
     """Load distinct guest names from documents table, falling back to static roster."""
     global _DYNAMIC_GUEST_ROSTER
     if _DYNAMIC_GUEST_ROSTER is not None:
         return _DYNAMIC_GUEST_ROSTER
     if db is not None:
         try:
-            from sqlalchemy import distinct, select
             from app.models import Document
+            from sqlalchemy import distinct, select
             stmt = select(distinct(Document.guest)).where(Document.guest.isnot(None))
             res = await db.execute(stmt)
             names = {r[0].strip() for r in res.all() if r[0] and r[0].strip()}
@@ -274,8 +274,8 @@ async def load_guest_roster(db: Optional[Any] = None) -> Set[str]:
 def check_unsupported_names(
     answer: str,
     sources: Sequence[Any],
-    known_roster: Optional[Set[str]] = None,
-) -> List[str]:
+    known_roster: set[str] | None = None,
+) -> list[str]:
     """Identify person/guest names mentioned in answer that are not supported by cited sources.
 
     Checks known Lenny Podcast guests against the answer.
@@ -290,7 +290,7 @@ def check_unsupported_names(
     answer_lower = answer.lower()
 
     # Collect all supported tokens and names from cited sources
-    supported_text_corpus: List[str] = ["lenny", "lenny rachitsky", "rachitsky"]
+    supported_text_corpus: list[str] = ["lenny", "lenny rachitsky", "rachitsky"]
     for s in sources:
         if isinstance(s, dict):
             g = s.get("guest")
@@ -309,8 +309,8 @@ def check_unsupported_names(
 
     full_supported_corpus = " ".join(supported_text_corpus)
 
-    unsupported: List[str] = []
-    seen: Set[str] = set()
+    unsupported: list[str] = []
+    seen: set[str] = set()
 
     for guest in roster:
         clean_guest = guest.strip()
@@ -346,7 +346,7 @@ def check_unsupported_names(
 def verify_citations(
     answer: str,
     sources: Sequence[Any],
-    db: Optional[Any] = None,
+    db: Any | None = None,
 ) -> VerificationResult:
     """Full citation verification pipeline.
 
@@ -405,7 +405,7 @@ def verify_citations(
 
     # Check for unsupported guest names in substantive answers
     unsupported_names = check_unsupported_names(clean_ans, sources)
-    warnings: List[str] = [f"Mentions {name}, who is not in the cited transcripts" for name in unsupported_names]
+    warnings: list[str] = [f"Mentions {name}, who is not in the cited transcripts" for name in unsupported_names]
 
     # Substantive non-refusal answer with zero valid citations or unsupported names triggers retry
     needs_retry = (len(citations) == 0) or (len(unsupported_names) > 0)
@@ -520,7 +520,7 @@ def has_illegal_citations(text: str) -> bool:
 # Sentence Support & Groundedness Analysis
 # ---------------------------------------------------------------------------
 
-STOP_WORDS: Set[str] = {
+STOP_WORDS: set[str] = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
     "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
     "below", "between", "both", "but", "by", "can", "can't", "cannot", "could",
@@ -544,7 +544,7 @@ STOP_WORDS: Set[str] = {
 }
 
 
-def get_content_words(text: str) -> List[str]:
+def get_content_words(text: str) -> list[str]:
     """Tokenize and extract non-stop content words (lowercase alphanumeric, length > 1)."""
     clean = re.sub(r"\[sS]\d+\]", " ", text)
     tokens = re.findall(r"\b[a-zA-Z0-9_-]+\b", clean.lower())
@@ -569,7 +569,7 @@ RE_FACT_OR_ADVICE = re.compile(
 
 def strip_unverified_quote_sentences(
     text: str, sources: Sequence[Any]
-) -> Tuple[str, int]:
+) -> tuple[str, int]:
     """Delete any sentence that contains an unverified direct quote (≥6 words).
 
     Policy (STEP 2): an essay must never be stored with a direct quote that is
@@ -584,7 +584,7 @@ def strip_unverified_quote_sentences(
     if not text or not sources:
         return text, 0
 
-    normalized_sources: List[str] = []
+    normalized_sources: list[str] = []
     for s in sources:
         txt = s.get("text") or s.get("passage") if isinstance(s, dict) else getattr(s, "text", getattr(s, "passage", ""))
         clean_txt = re.sub(r"[^\w\s]", " ", (txt or "").lower())
@@ -600,15 +600,15 @@ def strip_unverified_quote_sentences(
         norm = " ".join(re.sub(r"[^\w\s]", " ", q.lower()).split())
         return norm not in full_corpus
 
-    def _split_sentences_quote_aware(paragraph: str) -> List[str]:
+    def _split_sentences_quote_aware(paragraph: str) -> list[str]:
         """Split on sentence terminators that are not inside a quoted span."""
         # Mark the ranges inside quotes so terminators inside them are ignored.
         inside = [False] * len(paragraph)
         for qm in quote_re.finditer(paragraph):
             for i in range(qm.start(), qm.end()):
                 inside[i] = True
-        sentences: List[str] = []
-        buf: List[str] = []
+        sentences: list[str] = []
+        buf: list[str] = []
         for i, ch in enumerate(paragraph):
             buf.append(ch)
             if ch in ".!?" and not inside[i]:
@@ -619,12 +619,12 @@ def strip_unverified_quote_sentences(
         return sentences
 
     deleted = 0
-    new_paragraphs: List[str] = []
+    new_paragraphs: list[str] = []
     for para in text.split("\n\n"):
         if '"' not in para and "“" not in para:
             new_paragraphs.append(para)
             continue
-        kept: List[str] = []
+        kept: list[str] = []
         for sent in _split_sentences_quote_aware(para):
             drop = False
             for qm in quote_re.finditer(sent):
@@ -642,7 +642,7 @@ def strip_unverified_quote_sentences(
     return "\n\n".join(new_paragraphs).strip(), deleted
 
 
-def verify_direct_quotes(text: str, sources: Sequence[Any]) -> Tuple[str, int, int]:
+def verify_direct_quotes(text: str, sources: Sequence[Any]) -> tuple[str, int, int]:
     """Verify that 6+ word quotes in text appear verbatim in cited source passages.
 
     If non-verbatim, rewrites quote into a paraphrase without quotation marks.
@@ -683,9 +683,9 @@ def verify_direct_quotes(text: str, sources: Sequence[Any]) -> Tuple[str, int, i
     return cleaned, valid_quotes, total_quotes
 
 
-def extract_speaker_turns(sources: Sequence[Any]) -> List[Tuple[str, str, str]]:
+def extract_speaker_turns(sources: Sequence[Any]) -> list[tuple[str, str, str]]:
     """Extract (speaker, timestamp_header, turn_body) from source passages."""
-    turns: List[Tuple[str, str, str]] = []
+    turns: list[tuple[str, str, str]] = []
     turn_re = re.compile(
         r"(?:^|\n)\*?\*?([A-Z][a-zA-Z\s.'-]+?)\*?\*?\s*\((?:\d{1,2}:)?\d{2}:\d{2}\):\s*",
     )
@@ -708,7 +708,7 @@ def extract_speaker_turns(sources: Sequence[Any]) -> List[Tuple[str, str, str]]:
     return turns
 
 
-def verify_speaker_attribution(text: str, sources: Sequence[Any]) -> Tuple[str, List[str]]:
+def verify_speaker_attribution(text: str, sources: Sequence[Any]) -> tuple[str, list[str]]:
     """Check that names next to quotes or claims match the guest or speaker of cited chunk.
 
     Host (Lenny) may only be credited for turns whose speaker label is Lenny.
@@ -719,7 +719,7 @@ def verify_speaker_attribution(text: str, sources: Sequence[Any]) -> Tuple[str, 
     if not turns:
         return text, []
 
-    mismatches: List[str] = []
+    mismatches: list[str] = []
     corrected_text = text
 
     # Check all quotes of 3+ words (e.g. "when do I think they've had a good enough experience...")
@@ -778,10 +778,10 @@ def normalize_paragraph_for_dedup(text: str) -> str:
     return " ".join(tokens)
 
 
-def check_duplicate_paragraphs(text: str) -> List[Tuple[str, str, float]]:
+def check_duplicate_paragraphs(text: str) -> list[tuple[str, str, float]]:
     """Find identical or near-duplicate paragraphs (normalized word overlap >= 0.80)."""
     paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    seen: List[Tuple[str, str, Set[str]]] = []
+    seen: list[tuple[str, str, set[str]]] = []
     duplicates = []
     for p in paras:
         if p.startswith("#") or len(p.split()) < 10:
@@ -806,8 +806,8 @@ def check_duplicate_paragraphs(text: str) -> List[Tuple[str, str, float]]:
 def deduplicate_paragraphs(text: str) -> str:
     """Remove duplicate and near-duplicate paragraphs while preserving order and headings."""
     paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    seen_sets: List[Set[str]] = []
-    kept_paras: List[str] = []
+    seen_sets: list[set[str]] = []
+    kept_paras: list[str] = []
 
     for p in paras:
         if p.startswith("#") or len(p.split()) < 10:
@@ -840,11 +840,11 @@ class GroundednessReport:
     supported_sentences: int
     total_sentences: int
     quotes_verified: str
-    unsupported_names: List[str]
+    unsupported_names: list[str]
     citation_format_ok: bool
     duplicates_found: int
     cleaned_text: str
-    speaker_mismatches: List[str] = field(default_factory=list)
+    speaker_mismatches: list[str] = field(default_factory=list)
 
 
 def clean_heading_profanity(text: str) -> str:

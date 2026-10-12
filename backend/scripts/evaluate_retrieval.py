@@ -4,7 +4,6 @@ import asyncio
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
 
 # Ensure backend root is on sys.path
 backend_dir = Path(__file__).resolve().parent.parent
@@ -12,7 +11,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from app.config import get_settings
-from app.db import async_session_factory, engine
+from app.db import async_session_factory
 from app.rag.embeddings import get_embeddings_client
 from app.rag.retrieval import RetrievalResult, retrieve
 
@@ -52,7 +51,7 @@ async def run_evaluation() -> None:
         print("\n--- IN-DOMAIN (PRODUCT & GROWTH) QUERIES ---")
         for qid, query, topic in ON_TOPIC_QUERIES:
             t0 = time.time()
-            results: List[RetrievalResult] = await retrieve(
+            results: list[RetrievalResult] = await retrieve(
                 query=query, db=session, top_k=6, min_score=0.0, embedder=client
             )
             elapsed_ms = (time.time() - t0) * 1000.0
@@ -67,7 +66,7 @@ async def run_evaluation() -> None:
         print("\n--- OUT-OF-DOMAIN (OFF-TOPIC) QUERIES ---")
         for qid, query, topic in OFF_TOPIC_QUERIES:
             t0 = time.time()
-            results: List[RetrievalResult] = await retrieve(
+            results: list[RetrievalResult] = await retrieve(
                 query=query, db=session, top_k=6, min_score=0.0, embedder=client
             )
             elapsed_ms = (time.time() - t0) * 1000.0

@@ -1,18 +1,19 @@
 """Health check and public config endpoints."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
+
 import httpx
+from app.config import get_settings
 from fastapi import APIRouter, Response, status
 from sqlalchemy import text
-from app.config import get_settings
 
 router = APIRouter(tags=["system"])
 logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
-async def health_check(response: Response) -> Dict[str, Any]:
+async def health_check(response: Response) -> dict[str, Any]:
     settings = get_settings()
     db_ok = False
     vector_count = 0
@@ -97,7 +98,7 @@ async def health_check(response: Response) -> Dict[str, Any]:
 
     is_ingested = bool(vector_count > 0)
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "status": overall_status,
         "ingested": is_ingested,
         "database": {
@@ -128,7 +129,7 @@ async def health_check(response: Response) -> Dict[str, Any]:
 
 
 @router.get("/config")
-async def get_public_config() -> Dict[str, Any]:
+async def get_public_config() -> dict[str, Any]:
     settings = get_settings()
     return {
         "provider": settings.llm_provider,

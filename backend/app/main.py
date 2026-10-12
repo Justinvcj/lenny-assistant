@@ -1,14 +1,14 @@
 """FastAPI application entry point."""
 
+import logging
 import time
 import uuid
-import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-
 from sqlalchemy.exc import DBAPIError, OperationalError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 try:
     import psycopg
@@ -17,19 +17,19 @@ except ImportError:
     PSYCOPG_ERRORS = ()
 
 from app.config import get_settings
-from app.logging_setup import setup_logging
 from app.errors import (
     AppException,
     app_exception_handler,
     db_connection_exception_handler,
-    validation_exception_handler,
     unhandled_exception_handler,
+    validation_exception_handler,
 )
+from app.logging_setup import setup_logging
+from app.routers.artifacts import router as artifacts_router
+from app.routers.chat import router as chat_router
+from app.routers.client_events import router as client_events_router
 from app.routers.health import router as health_router
 from app.routers.sessions import router as sessions_router
-from app.routers.chat import router as chat_router
-from app.routers.artifacts import router as artifacts_router
-from app.routers.client_events import router as client_events_router
 
 settings = get_settings()
 setup_logging(settings.log_level)

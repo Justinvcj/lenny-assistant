@@ -1,13 +1,12 @@
 """Tests for the /sessions API endpoints."""
 
 import uuid
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from fastapi.testclient import TestClient
 
 from app.db import get_db_session
 from app.main import app
+from fastapi.testclient import TestClient
 
 
 def make_mock_db(session_obj=None, sessions_list=None):
@@ -21,9 +20,9 @@ def make_mock_db(session_obj=None, sessions_list=None):
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
         if not getattr(instance, "updated_at", None):
-            instance.updated_at = datetime.now(timezone.utc)
+            instance.updated_at = datetime.now(UTC)
         if not getattr(instance, "messages", None):
             instance.messages = []
 

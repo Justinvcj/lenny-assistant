@@ -19,7 +19,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.agent.options import ProviderConfig, build_agent_options
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
@@ -37,13 +37,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentResult:
     content: str
-    tool_trace: List[Dict[str, Any]] = field(default_factory=list)
+    tool_trace: list[dict[str, Any]] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     degraded: bool = False
-    artifact: Optional[Dict[str, Any]] = None
+    artifact: dict[str, Any] | None = None
     runtime: str = "sdk"               # "sdk" or "degraded"
-    sdk_tools: List[str] = field(default_factory=list)
+    sdk_tools: list[str] = field(default_factory=list)
     num_turns: int = 0
 
 
@@ -52,7 +52,7 @@ class AgentResult:
 # ---------------------------------------------------------------------------
 
 
-def _format_sources_for_prompt(sources: List[Dict[str, Any]]) -> str:
+def _format_sources_for_prompt(sources: list[dict[str, Any]]) -> str:
     blocks = []
     for s in sources:
         sid = s.get("id", f"S{s.get('n', '?')}")
@@ -85,7 +85,7 @@ async def _run_with_sdk(
     db: Any,
     embedder: Any,
     provider: Any,
-    sources: Optional[List[Any]],
+    sources: list[Any] | None,
     max_artifact_bytes: int,
 ) -> AgentResult:
     """Run one agent turn via claude-agent-sdk against Ollama (or Anthropic).
@@ -95,12 +95,16 @@ async def _run_with_sdk(
     """
     # Local import so test suites that mock the SDK via monkeypatch still work.
     from claude_agent_sdk import (
-        AssistantMessage, ClaudeSDKClient, ResultMessage,
-        SystemMessage, TextBlock, ToolUseBlock,
+        AssistantMessage,
+        ClaudeSDKClient,
+        ResultMessage,
+        SystemMessage,
+        TextBlock,
+        ToolUseBlock,
     )
 
     settings = get_settings()
-    artifact_sink: Dict[str, Any] = {}
+    artifact_sink: dict[str, Any] = {}
     tool_server = build_tool_server(
         intent=intent,
         db=db, embedder=embedder, provider=provider, sources=sources,
@@ -121,10 +125,10 @@ async def _run_with_sdk(
         if provider_config.name == "anthropic":
             options.env["ANTHROPIC_API_KEY"] = provider_config.anthropic_api_key or ""
 
-        tool_calls: List[Dict[str, Any]] = []
-        final_text_parts: List[str] = []
-        artifact_payload: Optional[Dict[str, Any]] = None
-        init_tools: List[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        final_text_parts: list[str] = []
+        artifact_payload: dict[str, Any] | None = None
+        init_tools: list[str] = []
         input_tokens = 0
         output_tokens = 0
         num_turns = 0
@@ -294,7 +298,7 @@ async def _run_degraded(
     except AppException:
         # Re-raise explicit application exceptions (e.g. 502 bad_gateway)
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("orchestrator: degraded provider.chat failed: %s: %s",
                      type(exc).__name__, exc)
         err_str = str(exc)
@@ -336,11 +340,11 @@ async def run_agent(
     system_prompt: str,
     user_message: str,
     *,
-    provider: Optional[LLMProvider] = None,
-    timeout_s: Optional[int] = None,
+    provider: LLMProvider | None = None,
+    timeout_s: int | None = None,
     db: Any = None,
     embedder: Any = None,
-    sources: Optional[List[Any]] = None,
+    sources: list[Any] | None = None,
 ) -> AgentResult:
     """Run the agent for a single user turn."""
     settings = get_settings()
@@ -377,7 +381,7 @@ async def run_agent(
             result.sdk_tools,
         )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - t0
         if intent == Intent.ARTIFACT:
             logger.warning(
@@ -400,7 +404,7 @@ async def run_agent(
         )
     except AppException:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         elapsed = time.monotonic() - t0
         err_str = str(exc)
         auth_exc_names = ("AuthenticationError", "PermissionDeniedError")

@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-import yaml
+from typing import Any
 
+import yaml
 from app.agent.verify import (
     check_duplicate_paragraphs,
     extract_citation_tags,
@@ -72,8 +73,8 @@ class ValidationReport:
     quotes_verified: str = "0/0"
     names_verified: bool = True
     citation_format_ok: bool = True
-    rule_results: List[RuleValidation] = field(default_factory=list)
-    failed_rules: List[str] = field(default_factory=list)
+    rule_results: list[RuleValidation] = field(default_factory=list)
+    failed_rules: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         status = "PASSED" if self.passed else "FAILED"
@@ -109,7 +110,7 @@ class ValidationReport:
         return "\n".join(lines)
 
 
-def load_rules_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+def load_rules_config(config_path: str | None = None) -> dict[str, Any]:
     """Load ship30_rules.yaml config."""
     if config_path is None:
         base_dir = os.path.dirname(__file__)
@@ -156,7 +157,7 @@ def count_body_words(text: str) -> int:
     return count_words("\n".join(body_lines))
 
 
-def extract_sections(text: str) -> List[Dict[str, Any]]:
+def extract_sections(text: str) -> list[dict[str, Any]]:
     """Extract sections by H2 headings from the essay.
 
     Returns:
@@ -219,7 +220,7 @@ def clean_topic_string(topic: str) -> str:
 def validate_essay(
     markdown_text: str,
     available_sources: Sequence[Any],
-    rules_config: Optional[Dict[str, Any]] = None,
+    rules_config: dict[str, Any] | None = None,
     topic: str = "",
 ) -> ValidationReport:
     """Validate a drafted essay against Ship 30 writing principles.
@@ -243,10 +244,10 @@ def validate_essay(
     body_words = count_body_words(markdown_text)
     sections = extract_sections(markdown_text)
     num_sources = len(available_sources)
-    valid_source_indices: Set[int] = set(range(1, num_sources + 1))
+    valid_source_indices: set[int] = set(range(1, num_sources + 1))
 
-    rule_results: List[RuleValidation] = []
-    failed_rules: List[str] = []
+    rule_results: list[RuleValidation] = []
+    failed_rules: list[str] = []
 
     # 1. R_LENGTH: Word count (excludes headings and sources list).
     # Policy (STEP 5): if the essay is below the minimum, surface a dedicated
@@ -359,6 +360,20 @@ def validate_essay(
     body_titles = [bs["title"] for bs in body_sections]
     old_list_hits = [t for t in body_titles if t.strip().lower() in old_template_headings]
     duplicate_titles = [t for t in body_titles if body_titles.count(t) > 1]
+    angle_hits = [t for t in body_titles if re.search(r"\bAngle\s+\d+", t, re.IGNORECASE)]
+    _stop_words = {"a", "an", "the", "of", "to", "for", "in", "on", "with", "and", "or", "other", "about", "from", "by", "at", "as"}
+    stop_end_hits = [
+        t for t in body_titles
+        if t.strip().split() and re.sub(r"[^\w]", "", t.strip().split()[-1]).lower() in _stop_words
+    ]
+    bad_frag_hits = [
+        t for t in body_titles
+        if t.strip().lower() in {
+            "challenge lies identifying right product features",
+            "repeatedly tweaking onboarding flow exploring other",
+            "jeanne dewitt grosser seasoned marketer advises",
+        }
+    ]
     topic_heading_matches = []
     if topic_clean and len(topic_clean.split()) >= 2:
         for t in body_titles:
@@ -367,6 +382,9 @@ def validate_essay(
     specific_headings_passed = (
         not old_list_hits
         and not duplicate_titles
+        and not angle_hits
+        and not stop_end_hits
+        and not bad_frag_hits
         and len(topic_heading_matches) <= 1
     )
     if specific_headings_passed:
@@ -377,6 +395,12 @@ def validate_essay(
             parts.append(f"old-template headings: {old_list_hits}")
         if duplicate_titles:
             parts.append(f"duplicate body headings: {sorted(set(duplicate_titles))}")
+        if angle_hits:
+            parts.append(f"angle placeholder headings: {angle_hits}")
+        if stop_end_hits:
+            parts.append(f"stop-word ending headings: {stop_end_hits}")
+        if bad_frag_hits:
+            parts.append(f"fragment headings: {bad_frag_hits}")
         if len(topic_heading_matches) > 1:
             parts.append(f"too many headings containing topic string: {topic_heading_matches}")
         details = "; ".join(parts)

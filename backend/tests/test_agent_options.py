@@ -15,9 +15,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from app.agent.options import (
-    BUILTIN_TOOLS, GROUNDING_SYSTEM_PROMPT, ProviderConfig, build_agent_options,
+    BUILTIN_TOOLS,
+    GROUNDING_SYSTEM_PROMPT,
+    ProviderConfig,
+    build_agent_options,
 )
 from app.agent.router import Intent
 from app.agent.tools import build_tool_server
@@ -138,6 +140,7 @@ async def test_tool_factory_binds_sources_to_ship30(monkeypatch):
         captured["ran"] = True
         captured["n_sources"] = len(sources)
         from types import SimpleNamespace
+
         from app.skills.ship30 import EssayResult
         report = SimpleNamespace(passed=True, word_count=100, failed_rules=[], rule_results=[])
         return EssayResult(content="# Essay\n", word_count=100, report=report, repaired=False)

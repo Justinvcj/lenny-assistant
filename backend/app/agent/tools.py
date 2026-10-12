@@ -14,16 +14,15 @@ builds a fresh McpSdkServerConfig per request with those closures in place.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from app.agent.router import Intent
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
-from app.agent.router import Intent
-
 logger = logging.getLogger(__name__)
 
-ToolResult = Dict[str, Any]
+ToolResult = dict[str, Any]
 
 
 def _text_result(text: str) -> ToolResult:
@@ -31,7 +30,7 @@ def _text_result(text: str) -> ToolResult:
     return {"content": [{"type": "text", "text": text}]}
 
 
-def normalize_artifact_type(raw_type: Optional[str]) -> str:
+def normalize_artifact_type(raw_type: str | None) -> str:
     """Normalize user or model artifact type aliases to 'html' or 'markdown'.
 
     Aliases:
@@ -55,7 +54,7 @@ def normalize_artifact_type(raw_type: Optional[str]) -> str:
     return s
 
 
-CREATE_ARTIFACT_SCHEMA: Dict[str, Any] = {
+CREATE_ARTIFACT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "title": {
@@ -86,13 +85,13 @@ def build_tools(
     db: Any = None,
     embedder: Any = None,
     provider: Any = None,
-    sources: Optional[List[Any]] = None,
+    sources: list[Any] | None = None,
     top_k: int = 6,
     min_score: float = 0.58,
     max_artifact_bytes: int = 200_000,
-    intent: Optional[Intent] = None,
-    artifact_sink: Optional[Dict[str, Any]] = None,
-) -> List[SdkMcpTool[Any]]:
+    intent: Intent | None = None,
+    artifact_sink: dict[str, Any] | None = None,
+) -> list[SdkMcpTool[Any]]:
     """Build the `@tool`-wrapped SdkMcpTool instances for one request.
 
     When intent is supplied, returns ONLY the tool for that intent (SPEC D2):
@@ -108,7 +107,7 @@ def build_tools(
         "Call this before answering any user question.",
         {"query": str},
     )
-    async def _search_transcripts(args: Dict[str, Any]) -> ToolResult:
+    async def _search_transcripts(args: dict[str, Any]) -> ToolResult:
         query = args.get("query", "").strip()
         if not query:
             return _text_result("Empty query — refine and try again.")
@@ -124,7 +123,7 @@ def build_tools(
         if not results:
             return _text_result("NO RELEVANT RESULTS FOUND.")
 
-        lines: List[str] = []
+        lines: list[str] = []
         for i, r in enumerate(results, start=1):
             lines.append(
                 f"[S{i}] Episode: {r.title}"
@@ -139,7 +138,7 @@ def build_tools(
         "Allowed artifact_type values: 'html' (for pages/one-pagers/landing pages/tables) or 'markdown' (for documents/notes).",
         CREATE_ARTIFACT_SCHEMA,
     )
-    async def _create_artifact(args: Dict[str, Any]) -> ToolResult:
+    async def _create_artifact(args: dict[str, Any]) -> ToolResult:
         try:
             title = (args.get("title") or "Generated Artifact").strip()
             body = args.get("html") or args.get("content") or ""
@@ -179,7 +178,7 @@ def build_tools(
         except Exception as exc:
             logger.error("create_artifact failed with exception: %s", exc, exc_info=True)
             return {
-                "content": [{"type": "text", "text": f"Error creating artifact: {str(exc)}. Please retry with valid arguments: title, html, and artifact_type ('html' or 'markdown')."}],
+                "content": [{"type": "text", "text": f"Error creating artifact: {exc!s}. Please retry with valid arguments: title, html, and artifact_type ('html' or 'markdown')."}],
                 "is_error": True,
             }
 
@@ -189,7 +188,7 @@ def build_tools(
         "from the pre-retrieved transcript sources. Use this ONLY for essay requests.",
         {"topic": str},
     )
-    async def _generate_ship30_essay(args: Dict[str, Any]) -> ToolResult:
+    async def _generate_ship30_essay(args: dict[str, Any]) -> ToolResult:
         topic = args.get("topic", "").strip() or "growth insights"
         if not captured_sources or provider is None:
             logger.warning("generate_ship30_essay: no sources/provider bound")
@@ -241,13 +240,13 @@ def build_tool_server(
     db: Any,
     embedder: Any,
     provider: Any,
-    sources: Optional[List[Any]] = None,
+    sources: list[Any] | None = None,
     top_k: int = 6,
     min_score: float = 0.58,
     max_artifact_bytes: int = 200_000,
     server_name: str = "lenny",
-    intent: Optional[Intent] = None,
-    artifact_sink: Optional[Dict[str, Any]] = None,
+    intent: Intent | None = None,
+    artifact_sink: dict[str, Any] | None = None,
 ) -> McpSdkServerConfig:
     """Wrap `build_tools` as a `create_sdk_mcp_server` config narrowed to the request intent."""
     tools = build_tools(
@@ -270,7 +269,7 @@ async def search_transcripts(
     min_score: float = 0.58,
     db=None,
     embedder=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Direct Python entry point used by legacy unit tests."""
     if db is None or embedder is None:
         return {"sources": [], "count": 0}
@@ -289,7 +288,7 @@ async def search_transcripts(
 
 async def create_artifact(
     title: str, html: str, *, artifact_type: str = "html", max_bytes: int = 200_000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     clean_type = normalize_artifact_type(artifact_type)
     if clean_type not in ("html", "markdown"):
         from app.errors import AppException
@@ -311,11 +310,11 @@ async def create_artifact(
 
 async def generate_ship30_essay(
     topic: str,
-    key_points: Optional[List[str]] = None,
+    key_points: list[str] | None = None,
     *,
-    sources: Optional[List[Any]] = None,
+    sources: list[Any] | None = None,
     provider=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if sources is None or provider is None:
         return {
             "topic": topic,
@@ -339,13 +338,13 @@ async def generate_ship30_essay(
     }
 
 
-TOOL_REGISTRY: Dict[str, Any] = {
+TOOL_REGISTRY: dict[str, Any] = {
     "search_transcripts": search_transcripts,
     "create_artifact": create_artifact,
     "generate_ship30_essay": generate_ship30_essay,
 }
 
-INTENT_TOOLS: Dict[str, List[str]] = {
+INTENT_TOOLS: dict[str, list[str]] = {
     "QA": ["search_transcripts"],
     "ESSAY": ["generate_ship30_essay"],
     "ARTIFACT": ["create_artifact"],

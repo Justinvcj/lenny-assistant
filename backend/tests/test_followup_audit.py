@@ -14,11 +14,9 @@ Logs and asserts rewritten queries, retrieval scores, and response status.
 from __future__ import annotations
 
 import logging
-import uuid
-from typing import Any, Dict, List
-
 import socket
 import urllib.parse
+from typing import Any
 
 import pytest
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE, rewrite_query
@@ -53,7 +51,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-AUDIT_SESSIONS: List[Dict[str, Any]] = [
+AUDIT_SESSIONS: list[dict[str, Any]] = [
     {
         "id": 1,
         "name": "Session 1: Product-Market Fit",
@@ -89,7 +87,7 @@ async def test_audit_five_fresh_sessions_followup_sequence():
     threshold = settings.retrieval_min_score
     embedder = get_embeddings_client()
 
-    audit_logs: List[Dict[str, Any]] = []
+    audit_logs: list[dict[str, Any]] = []
 
     async with async_session_factory() as db:
         for sess in AUDIT_SESSIONS:

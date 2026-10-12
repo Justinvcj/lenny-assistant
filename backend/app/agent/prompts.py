@@ -12,7 +12,8 @@ Contains:
 from __future__ import annotations
 
 import re
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from app.config import get_settings
 
@@ -102,8 +103,8 @@ def format_source_blocks(sources: Sequence[Any], max_chars_per_source: int = 100
 
 
 def format_conversation_history(
-    history: Optional[Sequence[Any]] = None,
-    max_turns: Optional[int] = None,
+    history: Sequence[Any] | None = None,
+    max_turns: int | None = None,
 ) -> str:
     """Format the last N conversation history messages into a clean block.
 
@@ -144,8 +145,8 @@ def format_conversation_history(
 
 def build_system_prompt(
     sources: Sequence[Any],
-    history: Optional[Sequence[Any]] = None,
-    max_history_turns: Optional[int] = None,
+    history: Sequence[Any] | None = None,
+    max_history_turns: int | None = None,
 ) -> str:
     """Build the complete system prompt for the agent runtime.
 
@@ -198,7 +199,7 @@ def is_standalone_query(message: str) -> bool:
 
 def rewrite_query(
     current_message: str,
-    history: Optional[Sequence[Any]] = None,
+    history: Sequence[Any] | None = None,
 ) -> str:
     """Rewrite elliptical or pronoun-heavy follow-up questions into standalone queries.
 
@@ -214,7 +215,7 @@ def rewrite_query(
         return clean_msg
 
     # 1. Identify the immediately preceding assistant message (if any)
-    last_assistant: Optional[Any] = None
+    last_assistant: Any | None = None
     for msg in reversed(history):
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
         if role and role.lower() == "assistant":
@@ -222,7 +223,7 @@ def rewrite_query(
             break
 
     # Locate the most recent prior user query
-    prior_user_query: Optional[str] = None
+    prior_user_query: str | None = None
     for msg in reversed(history):
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
         if role and role.lower() == "user":

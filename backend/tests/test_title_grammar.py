@@ -7,9 +7,7 @@ heading in the answer, then to the generic default.
 from __future__ import annotations
 
 import pytest
-
 from app.routers.chat import derive_summary_title
-
 
 # Each case: (user_question, assistant_text, expected_title)
 CASES = [

@@ -3,11 +3,10 @@
 import json
 import logging
 import uuid
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 

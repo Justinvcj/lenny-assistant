@@ -1,16 +1,15 @@
 import json
 import uuid
-from typing import List
-from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.db import get_db_session
 from app.errors import AppException
 from app.models import Session
 from app.schemas import SessionCreate, SessionDetailResponse, SessionResponse
+from fastapi import APIRouter, Depends, Request, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 settings = get_settings()
@@ -72,10 +71,10 @@ async def create_session(
     return SessionResponse.model_validate(session)
 
 
-@router.get("", response_model=List[SessionResponse])
+@router.get("", response_model=list[SessionResponse])
 async def list_sessions(
     db: AsyncSession = Depends(get_db_session),
-) -> List[SessionResponse]:
+) -> list[SessionResponse]:
     stmt = select(Session).order_by(Session.created_at.desc())
     result = await db.execute(stmt)
     sessions = result.scalars().all()
@@ -119,4 +118,3 @@ async def delete_session(
         )
     await db.delete(session)
     await db.commit()
-    return None

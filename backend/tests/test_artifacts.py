@@ -1,14 +1,14 @@
 """Tests for the /artifacts API endpoints and artifact validation."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from fastapi.testclient import TestClient
-import pytest
 
+import pytest
 from app.db import get_db_session
 from app.main import app
 from app.models import Artifact
+from fastapi.testclient import TestClient
 
 
 def make_mock_db(artifact_obj=None):
@@ -22,7 +22,7 @@ def make_mock_db(artifact_obj=None):
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 
@@ -52,7 +52,7 @@ def test_get_artifact_success():
         type="html",
         title="Test One-Pager",
         content="<h1>Grounded One-Pager</h1>",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     mock_db = make_mock_db(artifact_obj=mock_art)
     app.dependency_overrides[get_db_session] = _override_with(mock_db)
@@ -204,8 +204,8 @@ def test_derive_artifact_type_from_prompt():
 @pytest.mark.asyncio
 async def test_tool_create_artifact_handler_normalizes_and_returns_artifact():
     """Verify in-process tool server create_artifact normalizes aliases and returns payload."""
-    from app.agent.tools import build_tools
     from app.agent.router import Intent
+    from app.agent.tools import build_tools
 
     tools = build_tools(intent=Intent.ARTIFACT)
     assert len(tools) == 1
@@ -227,6 +227,7 @@ async def test_tool_create_artifact_handler_normalizes_and_returns_artifact():
 def test_generate_deterministic_html_summary_zero_asterisks_and_zero_raw_tags():
     """Verify HTML artifacts contain zero literal ** outside code spans and zero raw [S#] tags."""
     import re
+
     from app.routers.chat import generate_deterministic_html_summary
 
     markdown_body = (
@@ -286,6 +287,7 @@ def test_generate_deterministic_html_summary_escapes_special_title_characters():
 def test_generate_deterministic_markdown_summary_numeric_sorting_and_zero_raw_tags():
     """Verify Markdown artifact citations are sorted strictly numerically and have zero raw [S#] tags."""
     import re
+
     from app.routers.chat import generate_deterministic_markdown_summary
 
     markdown_body = "Activation metrics [S1] and retention [S3, S2] with growth loops [S5, S4]."

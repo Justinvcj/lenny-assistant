@@ -7,8 +7,7 @@ and offset preservation invariants.
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-import unicodedata
+from typing import Any
 
 # Ensure backend directory is in sys.path
 current_dir = Path(__file__).resolve().parent
@@ -16,24 +15,17 @@ backend_dir = current_dir.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.rag.parser import (
-    SpeakerTurn,
-    compute_content_hash,
-    extract_frontmatter,
-    extract_speaker_turns,
-    parse_transcript_text,
-    parse_transcript_file,
-)
 from app.rag.chunking import (
-    ABBREVIATION_SENTENCE_REGEX,
-    ChunkDraft,
     chunk_document,
     chunk_turns,
-    determine_primary_speaker,
-    estimate_tokens,
-    format_chunk_text,
     split_long_turn,
     split_sentences,
+)
+from app.rag.parser import (
+    SpeakerTurn,
+    extract_speaker_turns,
+    parse_transcript_file,
+    parse_transcript_text,
 )
 
 
@@ -42,9 +34,9 @@ class TestResult:
         self.name = name
         self.category = category
         self.passed = True
-        self.failures: List[str] = []
-        self.warnings: List[str] = []
-        self.details: Dict[str, Any] = {}
+        self.failures: list[str] = []
+        self.warnings: list[str] = []
+        self.details: dict[str, Any] = {}
 
     def fail(self, msg: str):
         self.passed = False
@@ -559,7 +551,7 @@ def test_real_corpus_invariants() -> TestResult:
     return res
 
 
-def run_all_stress_tests() -> List[TestResult]:
+def run_all_stress_tests() -> list[TestResult]:
     """Execute all adversarial tests and print structured summary."""
     tests = [
         test_bom_handling,

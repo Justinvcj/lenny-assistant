@@ -7,20 +7,19 @@ Empirical verification of:
 """
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
 
+import pytest
+from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from fastapi.testclient import TestClient
 
-from app.agent.prompts import EXACT_REFUSAL_MESSAGE, is_standalone_query, rewrite_query
 
 @pytest.fixture
 def client():
     with TestClient(app) as c:
         yield c
 
-from app.agent.router import Intent, classify_intent
 from app.db import get_db_session
 from app.main import app
 from app.models import Artifact, Message, Session
@@ -31,8 +30,7 @@ from app.routers.chat import (
     get_chat_provider,
     is_command_string,
 )
-from tests.test_chat import MockEmbedder, MockLLMProvider, make_dynamic_mock_db, make_retrieval_chunk
-
+from tests.test_chat import MockEmbedder, MockLLMProvider, make_retrieval_chunk
 
 # ============================================================================
 # 1. Command String Rejection in derive_summary_title
@@ -87,7 +85,7 @@ def test_find_last_grounded_qa_exchange_deep_walkback():
     """Test history with multiple back-to-back artifact/essay commands, refusals, and clarifications.
     Assert find_last_grounded_qa_exchange walks back to the original QA exchange.
     """
-    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
     step = timedelta(seconds=10)
 
     # 1. Original grounded QA exchange
@@ -225,7 +223,7 @@ def test_find_last_grounded_qa_exchange_edge_cases():
     assert find_last_grounded_qa_exchange([]) == (None, None)
 
     # Only refusals
-    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
     ood_history = [
         Message(id=uuid.uuid4(), role="user", content="How to bake pizza?", created_at=t0),
         Message(id=uuid.uuid4(), role="assistant", content=EXACT_REFUSAL_MESSAGE, citations=[], intent="qa", created_at=t0 + timedelta(seconds=1)),
@@ -252,13 +250,13 @@ def make_accurate_mock_db(session_obj: Session):
             if not getattr(instance, "id", None):
                 instance.id = uuid.uuid4()
             if not getattr(instance, "created_at", None):
-                instance.created_at = datetime.now(timezone.utc)
+                instance.created_at = datetime.now(UTC)
             messages.append(instance)
         elif isinstance(instance, Artifact):
             if not getattr(instance, "id", None):
                 instance.id = uuid.uuid4()
             if not getattr(instance, "created_at", None):
-                instance.created_at = datetime.now(timezone.utc)
+                instance.created_at = datetime.now(UTC)
             artifacts.append(instance)
 
     mock_db.add = MagicMock(side_effect=fake_add)
@@ -267,7 +265,7 @@ def make_accurate_mock_db(session_obj: Session):
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 
@@ -315,7 +313,7 @@ def test_out_of_domain_followup_guard_zero_llm_calls(client, followup_query):
         id=session_id,
         llm_provider="ollama",
         llm_model="qwen2.5:7b",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     mock_db = make_accurate_mock_db(session_obj=mock_session_obj)
 

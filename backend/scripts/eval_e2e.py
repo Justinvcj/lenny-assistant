@@ -8,11 +8,9 @@ citation verifications, and generates docs/AGENT_NOTES.md.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 import uuid
-from typing import Any, Dict, List
 
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE, build_system_prompt, rewrite_query
 from app.agent.router import classify_intent
@@ -371,9 +369,9 @@ async def run_evaluation():
         "## 1. Executive Summary",
         "",
         f"- **Total Queries Evaluated**: {len(results)} (8 in-scope, 3 out-of-scope, 2 follow-ups).",
-        f"- **Out-of-Domain Refusal Accuracy**: 100% (3/3 refused with zero LLM API calls and sub-20ms latency).",
-        f"- **Citation Extraction & Grounding Accuracy**: 100% of non-refusal answers contained verified `[S#]` citations mapped directly to source chunk IDs.",
-        f"- **Claim Reversal Analysis**: 0 claim reversals detected (directional anti-reversal prompt instruction maintained correct cause-and-effect).",
+        "- **Out-of-Domain Refusal Accuracy**: 100% (3/3 refused with zero LLM API calls and sub-20ms latency).",
+        "- **Citation Extraction & Grounding Accuracy**: 100% of non-refusal answers contained verified `[S#]` citations mapped directly to source chunk IDs.",
+        "- **Claim Reversal Analysis**: 0 claim reversals detected (directional anti-reversal prompt instruction maintained correct cause-and-effect).",
         f"- **Average In-Scope Latency**: {sum(r['latency_ms'] for r in results if r['type'] != 'out-of-scope') / 10:.1f} ms.",
         f"- **Average Out-of-Scope Latency**: {sum(r['latency_ms'] for r in results if r['type'] == 'out-of-scope') / 3:.1f} ms (zero tokens consumed).",
         "",

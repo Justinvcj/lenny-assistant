@@ -1,8 +1,11 @@
 """SQLAlchemy 2 models for documents, chunks, sessions, messages, and artifacts."""
 
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, date, datetime
+from typing import Any, Optional
+
+from app.config import get_settings
+from app.db import Base
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
@@ -11,21 +14,18 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String,
     Text,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.config import get_settings
-from app.db import Base
 
 settings = get_settings()
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Document(Base):
@@ -34,15 +34,15 @@ class Document(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    guest: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    published_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    guest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
-    chunks: Mapped[List["Chunk"]] = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
+    chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
 
 
 class Chunk(Base):
@@ -56,10 +56,10 @@ class Chunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    speaker: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    start_char: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    end_char: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speaker: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(settings.embedding_dim), nullable=False)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
@@ -74,9 +74,9 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    client_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    user_metadata: Mapped[Dict[str, Any]] = mapped_column(
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_metadata: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
@@ -87,13 +87,13 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
-    messages: Mapped[List["Message"]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         "Message",
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
     )
-    artifacts: Mapped[List["Artifact"]] = relationship(
+    artifacts: Mapped[list["Artifact"]] = relationship(
         "Artifact",
         back_populates="session",
         cascade="all, delete-orphan",
@@ -111,15 +111,15 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    intent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    citations: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
-    tool_trace: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    intent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    tool_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     degraded: Mapped[bool] = mapped_column(default=False, nullable=False)
-    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     session: Mapped["Session"] = relationship("Session", back_populates="messages")
-    artifacts: Mapped[List["Artifact"]] = relationship("Artifact", back_populates="message")
+    artifacts: Mapped[list["Artifact"]] = relationship("Artifact", back_populates="message")
 
     __table_args__ = (
         CheckConstraint("role IN ('user', 'assistant')", name="check_message_role"),
@@ -136,7 +136,7 @@ class Artifact(Base):
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
-    message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,

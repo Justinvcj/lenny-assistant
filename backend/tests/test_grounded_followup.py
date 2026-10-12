@@ -8,20 +8,19 @@ after a refusal, and standalone off-domain questions after a grounded answer.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from app.db import get_db_session
-from app.llm.base import ChatResponse as LLMChatResponse, ProviderHealth
+from app.llm.base import ChatResponse as LLMChatResponse
+from app.llm.base import ProviderHealth
 from app.main import app
 from app.models import Message, Session
 from app.rag.retrieval import RetrievalResult
 from app.routers.chat import get_chat_embedder, get_chat_provider
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +73,7 @@ def _db(session_obj, history):
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     db.refresh = AsyncMock(side_effect=_refresh)
 
@@ -96,7 +95,7 @@ def _db(session_obj, history):
 
 
 def _grounded_history(session_id):
-    base = datetime.now(timezone.utc) - timedelta(minutes=5)
+    base = datetime.now(UTC) - timedelta(minutes=5)
     chunk_id = uuid.uuid4()
     return [
         Message(id=uuid.uuid4(), session_id=session_id, role="user",
@@ -113,7 +112,7 @@ def _grounded_history(session_id):
 
 
 def _refused_history(session_id):
-    base = datetime.now(timezone.utc) - timedelta(minutes=5)
+    base = datetime.now(UTC) - timedelta(minutes=5)
     return [
         Message(id=uuid.uuid4(), session_id=session_id, role="user",
                 content="How do I bake chocolate cake?", created_at=base),
@@ -174,7 +173,7 @@ def test_grounded_followup_bypasses_score_gate(client, followup):
     session_id = uuid.uuid4()
     session_obj = Session(id=session_id, llm_provider="ollama",
                           llm_model="qwen2.5:7b",
-                          created_at=datetime.now(timezone.utc))
+                          created_at=datetime.now(UTC))
     history = _grounded_history(session_id)
     low = _chunk(score=0.40, text="A passage of lower score about pmf discovery [S1].")
 
@@ -195,7 +194,7 @@ def test_fresh_short_message_refuses(client):
     session_id = uuid.uuid4()
     session_obj = Session(id=session_id, llm_provider="ollama",
                           llm_model="qwen2.5:7b",
-                          created_at=datetime.now(timezone.utc))
+                          created_at=datetime.now(UTC))
     low = _chunk(score=0.40)
     r, provider = _run(client, session_id, _db(session_obj, []),
                        [low], "Why is that?", "ignored")
@@ -209,7 +208,7 @@ def test_short_followup_after_refusal_still_refuses(client):
     session_id = uuid.uuid4()
     session_obj = Session(id=session_id, llm_provider="ollama",
                           llm_model="qwen2.5:7b",
-                          created_at=datetime.now(timezone.utc))
+                          created_at=datetime.now(UTC))
     low = _chunk(score=0.40)
     r, provider = _run(client, session_id,
                        _db(session_obj, _refused_history(session_id)),
@@ -224,7 +223,7 @@ def test_standalone_off_domain_after_grounded_answer_refuses(client):
     session_id = uuid.uuid4()
     session_obj = Session(id=session_id, llm_provider="ollama",
                           llm_model="qwen2.5:7b",
-                          created_at=datetime.now(timezone.utc))
+                          created_at=datetime.now(UTC))
     history = _grounded_history(session_id)
     low = _chunk(score=0.40)
     r, provider = _run(client, session_id, _db(session_obj, history),
@@ -239,7 +238,7 @@ def test_sky_blue_after_grounded_answer_refuses(client):
     session_id = uuid.uuid4()
     session_obj = Session(id=session_id, llm_provider="ollama",
                           llm_model="qwen2.5:7b",
-                          created_at=datetime.now(timezone.utc))
+                          created_at=datetime.now(UTC))
     history = _grounded_history(session_id)
     low = _chunk(score=0.40)
     r, provider = _run(client, session_id, _db(session_obj, history),

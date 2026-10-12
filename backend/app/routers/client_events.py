@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Optional
+
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ class ClientEventRequest(BaseModel):
     """Small structured client telemetry event (contains no sensitive user content)."""
 
     type: str = Field(..., min_length=1, max_length=128)
-    artifact_id: Optional[str] = Field(None, max_length=128)
+    artifact_id: str | None = Field(None, max_length=128)
     reason: str = Field(..., min_length=1, max_length=1024)
 
 

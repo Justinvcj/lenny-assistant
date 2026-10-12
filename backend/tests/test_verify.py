@@ -1,11 +1,9 @@
 """Unit tests for citation verification, tag extraction, validation, and refusal detection."""
 
 import uuid
-import pytest
 
 from app.agent.prompts import EXACT_REFUSAL_MESSAGE
 from app.agent.verify import (
-    VerificationResult,
     check_unsupported_names,
     clean_heading_profanity,
     extract_citation_tags,

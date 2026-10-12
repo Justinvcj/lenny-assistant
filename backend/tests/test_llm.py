@@ -6,9 +6,7 @@ These tests use a FakeLLMProvider — no Ollama or network required.
 from __future__ import annotations
 
 import pytest
-
 from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
-
 
 # ---------------------------------------------------------------------------
 # Fake provider for testing
@@ -140,8 +138,8 @@ def test_factory_anthropic_graceful_without_key(monkeypatch):
     settings = cfg_module.get_settings()
     monkeypatch.setattr(settings, "anthropic_api_key", "")
 
-    from app.llm.factory import get_provider
     from app.llm.anthropic_provider import AnthropicProvider
+    from app.llm.factory import get_provider
 
     provider = get_provider("anthropic")
     assert isinstance(provider, AnthropicProvider)
@@ -184,7 +182,6 @@ async def test_ollama_provider_health_no_server():
 async def test_ollama_provider_chat_no_server():
     """chat() against a non-existent server must raise an httpx error."""
     import httpx
-
     from app.llm.ollama_provider import OllamaProvider
 
     p = OllamaProvider(base_url="http://localhost:19999", model="qwen2.5:7b", timeout=2)
@@ -217,9 +214,10 @@ def test_anthropic_provider_no_package(monkeypatch):
 async def test_anthropic_provider_missing_api_key(monkeypatch):
     """AnthropicProvider initializes gracefully without key, reports missing_api_key on health(), and raises 502 on chat()."""
     from unittest.mock import MagicMock
+
     import app.llm.anthropic_provider as ap_module
-    from app.llm.anthropic_provider import AnthropicProvider
     from app.errors import AppException
+    from app.llm.anthropic_provider import AnthropicProvider
 
     monkeypatch.setattr(ap_module, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(ap_module, "_anthropic", MagicMock())
@@ -245,6 +243,7 @@ async def test_anthropic_provider_missing_api_key(monkeypatch):
 async def test_anthropic_provider_chat_mocked_http(monkeypatch):
     """AnthropicProvider.chat() sends messages and parses usage with mocked client."""
     from unittest.mock import AsyncMock, MagicMock
+
     import app.llm.anthropic_provider as ap_module
     from app.llm.anthropic_provider import AnthropicProvider
 
@@ -280,6 +279,7 @@ async def test_anthropic_provider_chat_mocked_http(monkeypatch):
 async def test_anthropic_provider_embed_raises_not_implemented(monkeypatch):
     """AnthropicProvider.embed() raises NotImplementedError as Anthropic has no embedding API."""
     from unittest.mock import MagicMock
+
     import app.llm.anthropic_provider as ap_module
     from app.llm.anthropic_provider import AnthropicProvider
 
@@ -296,6 +296,7 @@ async def test_anthropic_provider_embed_raises_not_implemented(monkeypatch):
 async def test_anthropic_provider_health_mocked_http(monkeypatch):
     """AnthropicProvider.health() verifies credentials with mocked models.list()."""
     from unittest.mock import AsyncMock, MagicMock
+
     import app.llm.anthropic_provider as ap_module
     from app.llm.anthropic_provider import AnthropicProvider
 

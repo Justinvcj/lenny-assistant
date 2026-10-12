@@ -5,10 +5,10 @@ import hashlib
 import math
 import random
 import time
-from typing import Any, List, Optional, Protocol, Sequence, runtime_checkable
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 import httpx
-
 from app.config import get_settings
 from app.errors import AppException
 
@@ -76,20 +76,20 @@ def apply_prefix(text: str, is_query: bool = False) -> str:
 class EmbeddingsClient(Protocol):
     """Protocol for embedding generation clients."""
 
-    def get_embedding(self, text: str, is_query: bool = False) -> List[float]: ...
-    def get_query_embedding(self, query: str) -> List[float]: ...
+    def get_embedding(self, text: str, is_query: bool = False) -> list[float]: ...
+    def get_query_embedding(self, query: str) -> list[float]: ...
     def get_embeddings_batch(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]: ...
+    ) -> list[list[float]]: ...
 
-    async def get_embedding_async(self, text: str, is_query: bool = False) -> List[float]: ...
-    async def get_query_embedding_async(self, query: str) -> List[float]: ...
+    async def get_embedding_async(self, text: str, is_query: bool = False) -> list[float]: ...
+    async def get_query_embedding_async(self, query: str) -> list[float]: ...
     async def get_embeddings_batch_async(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]: ...
+    ) -> list[list[float]]: ...
 
-    def check_embedding_dim(self, expected_dim: Optional[int] = None) -> int: ...
-    async def check_embedding_dim_async(self, expected_dim: Optional[int] = None) -> int: ...
+    def check_embedding_dim(self, expected_dim: int | None = None) -> int: ...
+    async def check_embedding_dim_async(self, expected_dim: int | None = None) -> int: ...
 
 
 class OllamaEmbeddingsClient:
@@ -97,9 +97,9 @@ class OllamaEmbeddingsClient:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        expected_dim: Optional[int] = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        expected_dim: int | None = None,
         timeout_s: float = 60.0,
         max_retries: int = 3,
         initial_backoff_s: float = 1.0,
@@ -117,14 +117,14 @@ class OllamaEmbeddingsClient:
     def _is_transient_status(self, status_code: int) -> bool:
         return status_code in (429, 502, 503, 504)
 
-    def _call_embed_sync(self, prefixed_texts: List[str]) -> List[List[float]]:
+    def _call_embed_sync(self, prefixed_texts: list[str]) -> list[list[float]]:
         if not prefixed_texts:
             return []
 
         url = f"{self.base_url}/api/embed"
         payload = {"model": self.model, "input": prefixed_texts}
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         with httpx.Client(timeout=self.timeout) as client:
             for attempt in range(self.max_retries + 1):
@@ -164,14 +164,14 @@ class OllamaEmbeddingsClient:
             base_url=self.base_url,
         )
 
-    async def _call_embed_async(self, prefixed_texts: List[str]) -> List[List[float]]:
+    async def _call_embed_async(self, prefixed_texts: list[str]) -> list[list[float]]:
         if not prefixed_texts:
             return []
 
         url = f"{self.base_url}/api/embed"
         payload = {"model": self.model, "input": prefixed_texts}
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(self.max_retries + 1):
@@ -213,11 +213,11 @@ class OllamaEmbeddingsClient:
 
     def get_embeddings_batch(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         if not texts:
             return []
 
-        results: List[List[float]] = []
+        results: list[list[float]] = []
         prefixed = [apply_prefix(t, is_query=is_query) for t in texts]
 
         for i in range(0, len(prefixed), batch_size):
@@ -229,11 +229,11 @@ class OllamaEmbeddingsClient:
 
     async def get_embeddings_batch_async(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         if not texts:
             return []
 
-        results: List[List[float]] = []
+        results: list[list[float]] = []
         prefixed = [apply_prefix(t, is_query=is_query) for t in texts]
 
         for i in range(0, len(prefixed), batch_size):
@@ -243,25 +243,25 @@ class OllamaEmbeddingsClient:
 
         return results
 
-    def get_embedding(self, text: str, is_query: bool = False) -> List[float]:
+    def get_embedding(self, text: str, is_query: bool = False) -> list[float]:
         res = self.get_embeddings_batch([text], is_query=is_query, batch_size=1)
         if not res:
             raise EmbeddingsError(code="empty_embedding_result", message="No embedding returned")
         return res[0]
 
-    def get_query_embedding(self, query: str) -> List[float]:
+    def get_query_embedding(self, query: str) -> list[float]:
         return self.get_embedding(query, is_query=True)
 
-    async def get_embedding_async(self, text: str, is_query: bool = False) -> List[float]:
+    async def get_embedding_async(self, text: str, is_query: bool = False) -> list[float]:
         res = await self.get_embeddings_batch_async([text], is_query=is_query, batch_size=1)
         if not res:
             raise EmbeddingsError(code="empty_embedding_result", message="No embedding returned")
         return res[0]
 
-    async def get_query_embedding_async(self, query: str) -> List[float]:
+    async def get_query_embedding_async(self, query: str) -> list[float]:
         return await self.get_embedding_async(query, is_query=True)
 
-    def check_embedding_dim(self, expected_dim: Optional[int] = None) -> int:
+    def check_embedding_dim(self, expected_dim: int | None = None) -> int:
         target_dim = self.expected_dim if expected_dim is None else expected_dim
         sample = self.get_query_embedding("dimension check probe")
         actual_dim = len(sample)
@@ -271,7 +271,7 @@ class OllamaEmbeddingsClient:
             )
         return actual_dim
 
-    async def check_embedding_dim_async(self, expected_dim: Optional[int] = None) -> int:
+    async def check_embedding_dim_async(self, expected_dim: int | None = None) -> int:
         target_dim = self.expected_dim if expected_dim is None else expected_dim
         sample = await self.get_query_embedding_async("dimension check probe")
         actual_dim = len(sample)
@@ -288,9 +288,9 @@ class FakeEmbeddingsClient:
     def __init__(self, dim: int = 768):
         self.dim = dim
         self.call_count: int = 0
-        self.calls: List[List[str]] = []
+        self.calls: list[list[str]] = []
 
-    def _generate_vector(self, text: str, is_query: bool = False) -> List[float]:
+    def _generate_vector(self, text: str, is_query: bool = False) -> list[float]:
         prefixed = apply_prefix(text, is_query=is_query)
         # Use sha256 hash as seed to produce deterministic pseudo-random values
         seed_bytes = hashlib.sha256(prefixed.encode("utf-8")).digest()
@@ -315,7 +315,7 @@ class FakeEmbeddingsClient:
 
     def get_embeddings_batch(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         self.call_count += 1
         text_list = list(texts)
         self.calls.append(text_list)
@@ -323,35 +323,35 @@ class FakeEmbeddingsClient:
 
     async def get_embeddings_batch_async(
         self, texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         return self.get_embeddings_batch(texts, is_query=is_query, batch_size=batch_size)
 
-    def get_embedding(self, text: str, is_query: bool = False) -> List[float]:
+    def get_embedding(self, text: str, is_query: bool = False) -> list[float]:
         self.call_count += 1
         self.calls.append([text])
         return self._generate_vector(text, is_query=is_query)
 
-    def get_query_embedding(self, query: str) -> List[float]:
+    def get_query_embedding(self, query: str) -> list[float]:
         return self.get_embedding(query, is_query=True)
 
-    async def get_embedding_async(self, text: str, is_query: bool = False) -> List[float]:
+    async def get_embedding_async(self, text: str, is_query: bool = False) -> list[float]:
         return self.get_embedding(text, is_query=is_query)
 
-    async def get_query_embedding_async(self, query: str) -> List[float]:
+    async def get_query_embedding_async(self, query: str) -> list[float]:
         return self.get_query_embedding(query)
 
-    def check_embedding_dim(self, expected_dim: Optional[int] = None) -> int:
+    def check_embedding_dim(self, expected_dim: int | None = None) -> int:
         target = self.dim if expected_dim is None else expected_dim
         if self.dim != target:
             raise EmbeddingDimensionMismatchError(expected=target, actual=self.dim, model="fake")
         return self.dim
 
-    async def check_embedding_dim_async(self, expected_dim: Optional[int] = None) -> int:
+    async def check_embedding_dim_async(self, expected_dim: int | None = None) -> int:
         return self.check_embedding_dim(expected_dim)
 
 
 # Module-level default singleton management
-_global_client: Optional[EmbeddingsClient] = None
+_global_client: EmbeddingsClient | None = None
 
 
 def get_embeddings_client() -> EmbeddingsClient:
@@ -362,45 +362,45 @@ def get_embeddings_client() -> EmbeddingsClient:
     return _global_client
 
 
-def set_embeddings_client(client: Optional[EmbeddingsClient]) -> None:
+def set_embeddings_client(client: EmbeddingsClient | None) -> None:
     """Set or override the global embeddings client (e.g. for testing with FakeEmbeddingsClient)."""
     global _global_client
     _global_client = client
 
 
-def get_embedding(text: str, is_query: bool = False) -> List[float]:
+def get_embedding(text: str, is_query: bool = False) -> list[float]:
     return get_embeddings_client().get_embedding(text, is_query=is_query)
 
 
-def get_query_embedding(query: str) -> List[float]:
+def get_query_embedding(query: str) -> list[float]:
     return get_embeddings_client().get_query_embedding(query)
 
 
 def get_embeddings_batch(
     texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-) -> List[List[float]]:
+) -> list[list[float]]:
     return get_embeddings_client().get_embeddings_batch(texts, is_query=is_query, batch_size=batch_size)
 
 
-async def get_embedding_async(text: str, is_query: bool = False) -> List[float]:
+async def get_embedding_async(text: str, is_query: bool = False) -> list[float]:
     return await get_embeddings_client().get_embedding_async(text, is_query=is_query)
 
 
-async def get_query_embedding_async(query: str) -> List[float]:
+async def get_query_embedding_async(query: str) -> list[float]:
     return await get_embeddings_client().get_query_embedding_async(query)
 
 
 async def get_embeddings_batch_async(
     texts: Sequence[str], is_query: bool = False, batch_size: int = 32
-) -> List[List[float]]:
+) -> list[list[float]]:
     return await get_embeddings_client().get_embeddings_batch_async(
         texts, is_query=is_query, batch_size=batch_size
     )
 
 
-def check_embedding_dim(expected_dim: Optional[int] = None) -> int:
+def check_embedding_dim(expected_dim: int | None = None) -> int:
     return get_embeddings_client().check_embedding_dim(expected_dim)
 
 
-async def check_embedding_dim_async(expected_dim: Optional[int] = None) -> int:
+async def check_embedding_dim_async(expected_dim: int | None = None) -> int:
     return await get_embeddings_client().check_embedding_dim_async(expected_dim)

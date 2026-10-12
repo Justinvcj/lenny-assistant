@@ -6,7 +6,6 @@ from app.agent.prompts import (
     EXACT_REFUSAL_MESSAGE,
     build_system_prompt,
     format_conversation_history,
-    format_source_blocks,
     is_standalone_query,
     rewrite_query,
 )

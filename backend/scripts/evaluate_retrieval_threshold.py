@@ -1,8 +1,8 @@
 """Evaluation script for on-topic vs off-topic retrieval scores on the real ChatPRD corpus."""
 
 import asyncio
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # Ensure backend root is on sys.path
 backend_dir = Path(__file__).resolve().parent.parent

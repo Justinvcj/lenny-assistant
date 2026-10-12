@@ -10,15 +10,11 @@ Verifies four core invariants:
 import math
 import random
 import string
-import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from sqlalchemy import select
-from sqlalchemy.dialects import postgresql
-
 from app.models import Chunk, Document
 from app.rag.embeddings import (
     DOCUMENT_PREFIX,
@@ -27,13 +23,11 @@ from app.rag.embeddings import (
     FakeEmbeddingsClient,
     OllamaEmbeddingsClient,
     apply_prefix,
-    check_embedding_dim,
-    check_embedding_dim_async,
-    set_embeddings_client,
 )
 from app.rag.ingest import ingest_document
-from app.rag.retrieval import RetrievalResult, retrieve
-
+from app.rag.retrieval import retrieve
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
 # ==============================================================================
 # INVARIANT 1: Vector Math Invariants (Unit-Length Vectors)
@@ -84,8 +78,7 @@ def test_invariant_1_fake_embedder_unit_norm_adversarial_battery():
 
             norm = math.sqrt(sum(x * x for x in vec))
             dev = abs(norm - 1.0)
-            if dev > max_deviation:
-                max_deviation = dev
+            max_deviation = max(max_deviation, dev)
 
             assert dev <= 1e-6, f"Norm deviation {dev:.2e} exceeded 1e-6 tolerance on input {idx} (norm={norm})"
 

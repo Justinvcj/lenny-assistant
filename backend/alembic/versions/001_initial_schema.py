@@ -5,19 +5,20 @@ Revises:
 Create Date: 2026-10-10 12:00:00.000000
 
 """
-from typing import Sequence, Union
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-from pgvector.sqlalchemy import Vector
+from alembic import op
 from app.config import get_settings
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql
 
 settings = get_settings()
 
 revision: str = '001_initial_schema'
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

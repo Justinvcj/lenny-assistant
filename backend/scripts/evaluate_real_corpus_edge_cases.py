@@ -1,10 +1,9 @@
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, "backend")
 from app.rag.parser import parse_transcript_file
-from app.rag.chunking import chunk_document, estimate_tokens, split_sentences
 
 podcasts_dir = Path("data/lenny-source/podcasts")
 quote_misses = 0

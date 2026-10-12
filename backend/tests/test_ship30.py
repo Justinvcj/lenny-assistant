@@ -9,26 +9,19 @@ Tests:
 
 from __future__ import annotations
 
-import asyncio
-import pytest
-from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from dataclasses import dataclass
+from typing import Any
 
-from app.skills.validator import (
-    ValidationReport,
-    count_words,
-    extract_sections,
-    validate_essay,
-)
+import pytest
+from app.llm.base import ChatMessage, ChatResponse, ProviderHealth
 from app.skills.ship30 import (
     EssayResult,
-    SectionPlan,
-    assemble_essay,
     generate_essay,
     plan_outline,
 )
-from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
-
+from app.skills.validator import (
+    validate_essay,
+)
 
 # ---------------------------------------------------------------------------
 # FakeLLMProvider
@@ -38,19 +31,19 @@ from app.llm.base import ChatMessage, ChatResponse, LLMProvider, ProviderHealth
 class FakeLLMProvider:
     """Deterministic fake LLM that returns preset text per call count."""
 
-    def __init__(self, responses: Optional[List[str]] = None):
+    def __init__(self, responses: list[str] | None = None):
         self.responses = responses or []
         self.call_count = 0
-        self.prompts: List[str] = []
+        self.prompts: list[str] = []
 
     async def chat(
         self,
-        messages: List[ChatMessage],
+        messages: list[ChatMessage],
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1024,
-        extra: Optional[Any] = None,
+        extra: Any | None = None,
     ) -> ChatResponse:
         self.call_count += 1
         self.prompts.append(messages[-1].content if messages else "")
@@ -58,7 +51,7 @@ class FakeLLMProvider:
         text = self.responses[idx] if self.responses else f"Draft section #{self.call_count} [S1]."
         return ChatResponse(content=text, input_tokens=50, output_tokens=100, model="fake")
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1] * 768 for _ in texts]
 
     async def health(self) -> ProviderHealth:
@@ -78,11 +71,11 @@ class FakeChunk:
     score: float = 0.80
 
 
-def make_sources(n: int = 5) -> List[FakeChunk]:
+def make_sources(n: int = 5) -> list[FakeChunk]:
     return [FakeChunk(text=f"Source content {i} about product growth and retention [S{i}].", title=f"Episode {i}") for i in range(1, n + 1)]
 
 
-def make_good_essay(sources: List[Any]) -> str:
+def make_good_essay(sources: list[Any]) -> str:
     """Build a valid Ship 30 essay with all rules satisfied (≥1,000 words)."""
     src_tags = " ".join(f"[S{i}]" for i in range(1, min(len(sources) + 1, 4)))
 
@@ -253,7 +246,7 @@ Track cohort retention carefully. **Weekly actives** are key. [S2]
 
     def test_no_formatting_fails_r_formatting(self):
         sources = make_sources(3)
-        essay_no_fmt = f"""This is the opening hook for the essay about product growth. [S1]
+        essay_no_fmt = """This is the opening hook for the essay about product growth. [S1]
 It matters because retention drives revenue.
 
 ## Section One
@@ -280,7 +273,7 @@ Take action on the lessons above. Learn from the data. [S1]
 
     def test_missing_takeaway_fails_r_takeaway(self):
         sources = make_sources(3)
-        essay = f"""Opening hook paragraph here with sufficient length. [S1]
+        essay = """Opening hook paragraph here with sufficient length. [S1]
 
 ## Section One
 

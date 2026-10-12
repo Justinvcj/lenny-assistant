@@ -1,7 +1,6 @@
 """Unit tests for the Deterministic Intent Router."""
 
 import pytest
-
 from app.agent.router import Intent, classify, classify_intent
 
 

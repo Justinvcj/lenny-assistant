@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import enum
 import re
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 
 class Intent(str, enum.Enum):
@@ -92,7 +93,7 @@ RE_INQUIRY_ABOUT_ESSAYS = re.compile(
 )
 
 
-def _get_last_assistant_intent(history: Sequence[Any]) -> Optional[Intent]:
+def _get_last_assistant_intent(history: Sequence[Any]) -> Intent | None:
     """Extract the intent of the most recent assistant message from history."""
     for msg in reversed(history):
         role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
@@ -108,7 +109,7 @@ def _get_last_assistant_intent(history: Sequence[Any]) -> Optional[Intent]:
 
 def classify_intent(
     message: str,
-    history: Optional[Sequence[Any]] = None,
+    history: Sequence[Any] | None = None,
 ) -> Intent:
     """Classify user intent into QA, ESSAY, or ARTIFACT deterministically.
 

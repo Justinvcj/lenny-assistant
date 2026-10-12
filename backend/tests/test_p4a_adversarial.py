@@ -9,26 +9,21 @@ Covers:
 from __future__ import annotations
 
 import uuid
-import pytest
 
-from app.agent.router import Intent, classify_intent
+import pytest
 from app.agent.prompts import (
     EXACT_REFUSAL_MESSAGE,
     build_system_prompt,
     format_conversation_history,
-    format_source_blocks,
-    is_standalone_query,
     rewrite_query,
 )
+from app.agent.router import Intent, classify_intent
 from app.agent.verify import (
     extract_citation_tags,
-    is_refusal_response,
-    resolve_citations,
     strip_invalid_tags,
     verify_citations,
 )
 from app.rag.retrieval import RetrievalResult
-
 
 # =====================================================================
 # 1. ROUTER ADVERSARIAL TESTS

@@ -10,12 +10,8 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
-
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from collections.abc import Sequence
+from typing import Any
 
 from app.agent.orchestrator import run_agent
 from app.agent.prompts import (
@@ -40,6 +36,10 @@ from app.models import Artifact, Chunk, Message, Session, utc_now
 from app.rag.embeddings import get_embeddings_client
 from app.rag.retrieval import RetrievalResult, retrieve
 from app.schemas import ChatResponse, CitationItem, MessageCreate, MessageResponse
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,9 @@ def get_chat_embedder() -> Any:
 
 
 async def _load_sources_from_citations(
-    citations: List[Dict[str, Any]],
+    citations: list[dict[str, Any]],
     db: AsyncSession,
-) -> List[RetrievalResult]:
+) -> list[RetrievalResult]:
     """Load RetrievalResult objects from cited chunk IDs in previous assistant turn."""
     chunk_ids = []
     for c in citations:
@@ -91,7 +91,7 @@ async def _load_sources_from_citations(
     chunks = list(res.scalars().all())
     chunk_map = {c.id: c for c in chunks}
 
-    results: List[RetrievalResult] = []
+    results: list[RetrievalResult] = []
     for c in citations:
         cid = c.get("chunk_id")
         if not cid:
@@ -155,7 +155,7 @@ def _citation_val(c: Any, key: str, default: Any = "") -> Any:
     return getattr(c, key, default)
 
 
-def extract_explicit_topic(text: str) -> Optional[str]:
+def extract_explicit_topic(text: str) -> str | None:
     """Extract explicit topic from user prompt when present."""
     cleaned = text.strip()
     patterns = [
@@ -210,7 +210,7 @@ def is_command_string(text: str) -> bool:
 
 def find_last_grounded_qa_exchange(
     history: Sequence[Any],
-) -> tuple[Optional[Any], Optional[Any]]:
+) -> tuple[Any | None, Any | None]:
     """Walk backward through history to find the last grounded QA exchange.
 
     Returns (grounded_user_msg, grounded_assistant_msg).
@@ -281,7 +281,7 @@ def find_last_grounded_qa_exchange(
     return None, None
 
 
-def derive_summary_title(prev_user_text: Optional[str], prev_assistant_text: str) -> str:
+def derive_summary_title(prev_user_text: str | None, prev_assistant_text: str) -> str:
     """Derive an informative H1 title for summary artifacts.
 
     Rejects command strings (e.g. artifact/essay generation instructions). For
@@ -809,9 +809,9 @@ async def post_message(
             )
 
     # 6. Execution by intent
-    artifact_record: Optional[Artifact] = None
-    final_citations: List[CitationItem] = []
-    warnings_list: List[str] = []
+    artifact_record: Artifact | None = None
+    final_citations: list[CitationItem] = []
+    warnings_list: list[str] = []
 
     if intent == Intent.ESSAY:
         from app.skills.ship30 import generate_essay
@@ -826,7 +826,7 @@ async def post_message(
 
             essay_title = getattr(essay_result, "title", None)
             if not essay_title:
-                m = re.search(r"^#\s+(.+)$", essay_result.content, re.M)
+                m = re.search(r"^#\s+(.+)$", essay_result.content, re.MULTILINE)
                 essay_title = m.group(1).strip() if m else f"Ship 30 Essay: {resolved_topic[:60]}"
             wc = essay_result.word_count
 
@@ -886,7 +886,7 @@ async def post_message(
             raise
         except Exception as exc:
             logger.error("Ship 30 essay generation failed: %s", exc, exc_info=True)
-            final_content = f"Failed to generate essay: {str(exc)}"
+            final_content = f"Failed to generate essay: {exc!s}"
             tool_trace = [{"action": "ship30_generate_essay", "error": str(exc)}]
             degraded = True
 
@@ -1060,7 +1060,7 @@ async def post_message(
         # answer's cited chunks into the sources list so the agent + verifier
         # can still ground the follow-up.
         is_grounded_followup = False
-        prev_asst_for_followup: Optional[Message] = None
+        prev_asst_for_followup: Message | None = None
         if history_messages and not is_standalone_query(body.content):
             last = history_messages[-1]
             if (
@@ -1135,7 +1135,7 @@ async def post_message(
             prev_cits = list(prev_asst_for_followup.citations or []) if prev_asst_for_followup else []
             prev_sources = await _load_sources_from_citations(prev_cits, db)
             seen_ids: set = set()
-            merged: List[RetrievalResult] = []
+            merged: list[RetrievalResult] = []
             for c in list(prev_sources) + list(raw_chunks):
                 if c.chunk_id in seen_ids:
                     continue

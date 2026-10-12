@@ -4,7 +4,6 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
 
 # Ensure backend root is on sys.path
 backend_dir = Path(__file__).resolve().parent.parent
@@ -50,7 +49,7 @@ TARGET_EPISODES = [
 ]
 
 
-def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+def cosine_similarity(v1: list[float], v2: list[float]) -> float:
     dot = sum(a * b for a, b in zip(v1, v2))
     norm1 = math.sqrt(sum(a * a for a in v1))
     norm2 = math.sqrt(sum(b * b for b in v2))
@@ -77,7 +76,7 @@ def main():
 
     # 2. Parse and chunk selected representative episodes
     print("Parsing and chunking episodes...")
-    all_chunks: List[Tuple[str, str, str, str, ChunkDraft]] = []  # (slug, title, guest, text, draft)
+    all_chunks: list[tuple[str, str, str, str, ChunkDraft]] = []  # (slug, title, guest, text, draft)
 
     for ep_filename in TARGET_EPISODES:
         ep_path = data_dir / ep_filename

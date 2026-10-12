@@ -1,19 +1,19 @@
 """Standardized application error models and exception handlers."""
 
 import logging
-from typing import Optional
 
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 
 class ErrorDetail(BaseModel):
     code: str
     message: str
-    status_code: Optional[int] = None
+    status_code: int | None = None
 
 
 class ErrorEnvelope(BaseModel):

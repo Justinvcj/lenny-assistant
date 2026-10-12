@@ -1,11 +1,10 @@
 """Unit tests for Ollama embeddings client, prefixes, and FakeEmbeddingsClient."""
 
 import math
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from app.rag.embeddings import (
     DOCUMENT_PREFIX,
     QUERY_PREFIX,
@@ -202,6 +201,7 @@ def test_live_ollama_integration():
     import os
     import socket
     from urllib.parse import urlparse
+
     from app.config import get_settings
 
     base_url = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url

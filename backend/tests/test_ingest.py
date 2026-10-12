@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from app.models import Chunk, Document
 from app.rag.embeddings import FakeEmbeddingsClient
 from app.rag.ingest import (

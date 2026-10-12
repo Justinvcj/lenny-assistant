@@ -1,18 +1,9 @@
 """Unit tests for transcript parser and chunker using isolated fixture strings."""
 
-from datetime import date
 import uuid
+from datetime import date
 
 from app.models import Chunk, Document
-from app.rag.parser import (
-    SpeakerTurn,
-    compute_content_hash,
-    derive_slug,
-    is_episode_file,
-    parse_transcript,
-    parse_transcript_file,
-    parse_transcript_text,
-)
 from app.rag.chunking import (
     ChunkDraft,
     chunk_document,
@@ -22,7 +13,14 @@ from app.rag.chunking import (
     split_long_turn,
     split_sentences,
 )
-
+from app.rag.parser import (
+    SpeakerTurn,
+    compute_content_hash,
+    derive_slug,
+    is_episode_file,
+    parse_transcript,
+    parse_transcript_text,
+)
 
 # --- Test Fixtures ---
 

@@ -1,15 +1,14 @@
 import logging
 import uuid
-from typing import Any, Dict
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_db_session
 from app.errors import AppException
 from app.models import Artifact, utc_now
 from app.schemas import ArtifactCreate, ArtifactResponse
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
 logger = logging.getLogger(__name__)

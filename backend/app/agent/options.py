@@ -11,17 +11,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
+from app.agent.router import Intent
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import McpSdkServerConfig
 
-from app.agent.router import Intent
-
-
 # Full built-in SDK tool list, mirrored from spike/sdk_test.py. Passed as
 # `disallowed_tools` so the SDK's CLI never advertises any of them to the model.
-BUILTIN_TOOLS: List[str] = [
+BUILTIN_TOOLS: list[str] = [
     "Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
     "TaskUpdate", "Bash", "CronCreate", "CronDelete", "CronList", "DesignSync",
     "Edit", "EnterWorktree", "ExitWorktree", "Glob", "Grep", "ListAgents",
@@ -33,7 +30,7 @@ BUILTIN_TOOLS: List[str] = [
 
 # Allowed MCP tools per intent (the actual public tool names appear as
 # "mcp__lenny__<tool>" once the SDK registers the create_sdk_mcp_server block).
-INTENT_ALLOWED_TOOLS: Dict[Intent, List[str]] = {
+INTENT_ALLOWED_TOOLS: dict[Intent, list[str]] = {
     Intent.QA: ["search_transcripts"],
     Intent.ESSAY: ["generate_ship30_essay"],
     Intent.ARTIFACT: ["create_artifact"],
@@ -58,8 +55,8 @@ class ProviderConfig:
 
     name: str                       # "ollama" or "anthropic"
     model: str                      # e.g. "qwen2.5:7b"
-    ollama_base_url: Optional[str] = None  # required when name == "ollama"
-    anthropic_api_key: Optional[str] = None  # required when name == "anthropic"
+    ollama_base_url: str | None = None  # required when name == "ollama"
+    anthropic_api_key: str | None = None  # required when name == "anthropic"
 
 
 def _mcp_prefix(tool_name: str, server_name: str = "lenny") -> str:
@@ -73,7 +70,7 @@ def build_agent_options(
     provider_config: ProviderConfig,
     tempdir: Path,
     *,
-    system_prompt: Optional[str] = None,
+    system_prompt: str | None = None,
     max_turns: int = 5,
     server_name: str = "lenny",
 ) -> ClaudeAgentOptions:
@@ -95,7 +92,7 @@ def build_agent_options(
     allowed_simple = INTENT_ALLOWED_TOOLS.get(intent, ["search_transcripts"])
     allowed_tools = [_mcp_prefix(n, server_name) for n in allowed_simple]
 
-    env: Dict[str, str] = {}
+    env: dict[str, str] = {}
     if provider_config.name == "ollama":
         if not provider_config.ollama_base_url:
             raise ValueError("ollama_base_url is required for the ollama provider")

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from fastapi.testclient import TestClient
-
 import anthropic
+import pytest
 from app.agent.orchestrator import run_agent
 from app.agent.router import Intent
 from app.config import get_settings
@@ -21,6 +19,7 @@ from app.main import app
 from app.models import Session
 from app.rag.retrieval import RetrievalResult
 from app.routers.chat import get_chat_provider
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
@@ -168,7 +167,7 @@ def test_chat_endpoint_missing_anthropic_key_returns_clean_502_envelope(monkeypa
         id=session_id,
         llm_provider="anthropic",
         llm_model="claude-3-5-sonnet-20241022",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = AsyncMock()
@@ -179,7 +178,7 @@ def test_chat_endpoint_missing_anthropic_key_returns_clean_502_envelope(monkeypa
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 
@@ -235,7 +234,7 @@ def test_chat_endpoint_invalid_anthropic_key_returns_clean_502_envelope(monkeypa
         id=session_id,
         llm_provider="anthropic",
         llm_model="claude-3-5-sonnet-20241022",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     mock_db = AsyncMock()
@@ -246,7 +245,7 @@ def test_chat_endpoint_invalid_anthropic_key_returns_clean_502_envelope(monkeypa
         if not getattr(instance, "id", None):
             instance.id = uuid.uuid4()
         if not getattr(instance, "created_at", None):
-            instance.created_at = datetime.now(timezone.utc)
+            instance.created_at = datetime.now(UTC)
 
     mock_db.refresh = AsyncMock(side_effect=fake_refresh)
 

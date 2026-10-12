@@ -7,13 +7,13 @@ Marked with @pytest.mark.db. Skipped with a clear message if database is unreach
 import asyncio
 import os
 import uuid
-import pytest
-from sqlalchemy import delete, select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import selectinload
 
+import pytest
 from app.config import get_settings
 from app.models import Artifact, Message, Session, utc_now
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 settings = get_settings()
 TEST_DB_URL = os.environ.get("DATABASE_URL", settings.database_url)

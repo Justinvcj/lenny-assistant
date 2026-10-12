@@ -1,23 +1,15 @@
 """Adversarial stress-testing script for P4a modules."""
 
-import sys
 import uuid
-from typing import List
 
-from app.agent.router import Intent, classify_intent
 from app.agent.prompts import (
-    EXACT_REFUSAL_MESSAGE,
     build_system_prompt,
     format_conversation_history,
-    format_source_blocks,
-    is_standalone_query,
     rewrite_query,
 )
+from app.agent.router import Intent, classify_intent
 from app.agent.verify import (
     extract_citation_tags,
-    is_refusal_response,
-    resolve_citations,
-    strip_invalid_tags,
     verify_citations,
 )
 from app.rag.retrieval import RetrievalResult
@@ -127,7 +119,7 @@ history_50_assistant_tail = [
     for i in range(49)
 ]
 rw_tail = rewrite_query("What about it?", history_50_assistant_tail)
-print(f"Rewritten query with 49 assistant trailing turns: {repr(rw_tail)}")
+print(f"Rewritten query with 49 assistant trailing turns: {rw_tail!r}")
 
 print("\n" + "=" * 60)
 print("3. VERIFIER ADVERSARIAL TESTS")
@@ -203,8 +195,8 @@ verify_runs = [
 print("\n--- Running verify_citations on test cases ---")
 for ans, exp_retry, exp_citations, exp_clean in verify_runs:
     res = verify_citations(ans, mock_sources)
-    print(f"Input: {repr(ans)}")
-    print(f"  Cleaned: {repr(res.cleaned_text)}")
+    print(f"Input: {ans!r}")
+    print(f"  Cleaned: {res.cleaned_text!r}")
     print(f"  Valid tags: {res.valid_tags}, Invalid tags: {res.invalid_tags}")
     print(f"  Citations count: {len(res.citations)} (exp: {exp_citations})")
     print(f"  needs_retry: {res.needs_retry} (exp: {exp_retry}), is_refusal: {res.is_refusal}")
