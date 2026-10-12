@@ -10,17 +10,17 @@ Demo video: *(link added at submission)*
 
 ```mermaid
 flowchart LR
-    U[User browser] -->|HTTP/JSON| FE[React + Vite<br/>frontend]
-    FE -->|/sessions/.../messages| API[FastAPI backend]
-    API --> ROUTER[Intent router<br/>QA / ESSAY / ARTIFACT]
-    ROUTER -->|retrieval first| RAG[Embed + pgvector<br/>cosine top-k]
-    RAG --> DB[(PostgreSQL<br/>+ pgvector<br/>302 docs<br/>21,994 chunks)]
-    ROUTER -->|one tool per intent| AGENT[Locked-down agent<br/>SDK built-ins disabled]
-    AGENT -->|REST| LLM[Ollama local<br/>qwen2.5:7b + nomic-embed-text]
-    AGENT -. optional .-> ANT[Anthropic API<br/>UNTESTED]
-    API --> VERIFY[Citation verifier<br/>maps every S# tag<br/>to DB rows]
-    API --> SKILL[Ship 30 skill<br/>plan → draft → expand → trim]
-    FE -->|srcdoc, sandbox=&quot;&quot;| VIEW[Artifact viewer<br/>DOMPurify + CSP]
+    U[User browser] -->|HTTP JSON| FE[React Vite frontend]
+    FE -->|POST session message| API[FastAPI backend]
+    API --> ROUTER[Intent router QA ESSAY ARTIFACT]
+    ROUTER -->|retrieval first| RAG[Embed and pgvector cosine top-k]
+    RAG --> DB[(PostgreSQL pgvector 302 docs 21994 chunks)]
+    ROUTER -->|one tool per intent| AGENT[Locked-down agent SDK built-ins disabled]
+    AGENT -->|REST| LLM[Ollama local qwen2.5-7b plus nomic-embed-text]
+    AGENT -. optional .-> ANT[Anthropic API UNTESTED]
+    API --> VERIFY[Citation verifier maps every S tag to DB rows]
+    API --> SKILL[Ship 30 skill plan draft expand trim]
+    FE -->|srcdoc sandbox empty| VIEW[Artifact viewer DOMPurify and CSP]
 ```
 
 Request flow (chat):
@@ -32,26 +32,26 @@ sequenceDiagram
     participant FE as Frontend
     participant API as FastAPI
     participant RAG as pgvector
-    participant LLM as Ollama/Anthropic
+    participant LLM as Ollama or Anthropic
     participant V as Verifier
     U->>FE: types question
-    FE->>API: POST /sessions/{id}/messages
-    API->>API: classify intent (QA/ESSAY/ARTIFACT)
-    API->>RAG: embed query + cosine top-k
-    alt top_score < RETRIEVAL_MIN_SCORE
-        API-->>FE: 200 exact refusal (0 LLM calls)
-    else grounded follow-up (short + prior cited)
-        API->>RAG: merge prior cited chunks (bypass score gate)
-        API->>LLM: grounded prompt with [S1..Sn]
-        LLM-->>API: answer with [S#] tags
-        API->>V: validate every [S#] against DB
-        V-->>API: cleaned_text + citations
-        API-->>FE: 200 {content, citations, latency}
+    FE->>API: POST session message
+    API->>API: classify intent QA ESSAY or ARTIFACT
+    API->>RAG: embed query and cosine top-k
+    alt top score below threshold
+        API-->>FE: 200 exact refusal zero LLM calls
+    else grounded follow-up short and prior cited
+        API->>RAG: merge prior cited chunks bypass score gate
+        API->>LLM: grounded prompt with numbered sources
+        LLM-->>API: answer with S tags
+        API->>V: validate every S tag against DB
+        V-->>API: cleaned text and citations
+        API-->>FE: 200 answer with citations
     else normal grounded QA
-        API->>LLM: grounded prompt with [S1..Sn]
-        LLM-->>API: answer with [S#] tags
-        API->>V: validate tags; retry once if missing
-        API-->>FE: 200 {content, citations, latency}
+        API->>LLM: grounded prompt with numbered sources
+        LLM-->>API: answer with S tags
+        API->>V: validate tags and retry once if missing
+        API-->>FE: 200 answer with citations
     end
 ```
 
