@@ -169,6 +169,15 @@ you into growth mode before your retention curves have proven the product earns 
 
 {body_para(12)}
 
+Boardroom conversations frequently reward optimistic narratives over disciplined quantitative honesty.
+Founders who report flat retention plainly earn credibility that compounds across funding rounds.
+Investors tracking longitudinal portfolios discount flashy acquisition claims and reward teams whose
+monthly cohort reports show real customer stickiness and durable product value signals. {src_tags}
+
+Honest retention reporting improves board decisions by framing operating choices against durable
+product resonance rather than vanity top-line growth. Weekly cohort reviews build a shared vocabulary
+across functions and align incentives with the long-run slope of customer value realization. {src_tags}
+
 The founders who resist this pressure and stay focused on the product consistently outperform those who
 optimise for optics. The market eventually rewards honesty about where you are in the PMF journey. {src_tags}
 
@@ -435,11 +444,12 @@ async def test_generate_essay_repair_pass_not_looped():
 
     # All responses are garbage that will fail validation
     bad_response = "Short answer."
-    provider = FakeLLMProvider(responses=[bad_response] * (n_sections * 2 + 2))
+    provider = FakeLLMProvider(responses=[bad_response] * (n_sections * 4 + 4))
 
     result = await generate_essay("growth", sources, provider)
-    # Max calls = n_sections (draft) + n_sections (repair) = 2 * n_sections
-    assert provider.call_count <= n_sections * 2 + 2
+    # Max calls = headline (1) + n_sections (draft) + up to 2 * n_sections
+    # (two R3 expansion passes) + n_sections (one repair pass).
+    assert provider.call_count <= n_sections * 4 + 2
     # result is always returned — never raises
     assert isinstance(result, EssayResult)
 

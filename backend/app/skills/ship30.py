@@ -736,13 +736,62 @@ async def generate_essay(
     essay_md = assemble_essay(headline, drafted)
     current_wc = count_body_words(essay_md)
 
-    # If above 1400 words, trim excess from longest body sections
+    # R3: canonical length range comes from the rules metadata.
+    from app.skills.validator import load_rules_config as _load_rules
+    _meta = _load_rules().get("metadata", {})
+    LEN_MIN = _meta.get("min_word_count", 1100)
+    LEN_MAX = _meta.get("max_word_count", 1400)
+    LEN_TRIM = _meta.get("trim_target", 1350)
+
+    # If above max, trim excess from longest body sections down to <=trim_target.
     t_trim0 = time.perf_counter()
-    if current_wc > 1400:
-        logger.info("Essay word count %d > 1400: trimming to target range", current_wc)
-        drafted = trim_essay_sections(drafted, outline, target_max=1350)
+    if current_wc > LEN_MAX:
+        logger.info("Essay word count %d > %d: trimming to <=%d", current_wc, LEN_MAX, LEN_TRIM)
+        drafted = trim_essay_sections(drafted, outline, target_max=LEN_TRIM)
         essay_md = assemble_essay(headline, drafted)
+        current_wc = count_body_words(essay_md)
     timings.append(("Trimming / Budget", (time.perf_counter() - t_trim0) * 1000))
+
+    # R3 expansion: if below min, run up to 2 expansion passes that may only
+    # add sentences supported by unused source passages (expand_section
+    # already restricts allowed_tags to unused sources). After each pass we
+    # re-run the quote-deletion / citation-normalization / support checks.
+    t_exp0 = time.perf_counter()
+    expand_passes = 0
+    while current_wc < LEN_MIN and expand_passes < 2:
+        shortfall = LEN_MIN - current_wc
+        body_order = sorted(
+            [i for i, p in enumerate(outline) if not p.is_hook and not p.is_takeaway],
+            key=lambda i: count_words(drafted[i]),
+        )
+        if not body_order:
+            break
+        added_any = False
+        for i in body_order:
+            if shortfall <= 0:
+                break
+            expanded = await expand_section(
+                drafted[i], outline[i], topic, sources, provider,
+                additional_words=max(80, min(200, shortfall // max(1, len(body_order)) + 40)),
+            )
+            if expanded and expanded != drafted[i]:
+                before = count_words(drafted[i])
+                drafted[i] = expanded
+                after = count_words(drafted[i])
+                shortfall -= max(0, after - before)
+                added_any = True
+        essay_md = assemble_essay(headline, drafted)
+        from app.agent.verify import strip_unverified_quote_sentences as _strip_q
+        essay_md, _ = _strip_q(essay_md, sources)
+        from app.agent.verify import normalize_citations as _norm_c
+        essay_md = _norm_c(essay_md)
+        current_wc = count_body_words(essay_md)
+        expand_passes += 1
+        logger.info("Expansion pass %d: body_words=%d (target_min=%d)",
+                    expand_passes, current_wc, LEN_MIN)
+        if not added_any:
+            break
+    timings.append(("Expansion Passes", (time.perf_counter() - t_exp0) * 1000))
 
     # STEP 2: delete sentences with unverified direct quotes BEFORE the first
     # validation pass so fabricated quotes never reach the user.

@@ -2,10 +2,18 @@
 # Verified against the Ship 30 for 30 Ultimate Guide (notes/ship30_source.md)
 
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
+  # R3: Single canonical target range used by the validator, this rules file,
+  # the chat message and the length-control logic in ship30.py.
   target_word_count: 1250
-  min_word_count: 1000
-  max_word_count: 1500
+  min_word_count: 1100
+  max_word_count: 1400
+  # Lower "needs review" floor: below this the essay is marked for human review
+  # instead of a hard FAIL after expansion found no unused supported passages.
+  review_floor: 1000
+  # Upper trim target: when we have to trim an over-long essay, trim down to
+  # at most this many body words.
+  trim_target: 1350
   source_file: "notes/ship30_source.md"
   guide_url: "https://www.ship30for30.com/post/how-to-start-writing-online-the-ship-30-for-30-ultimate-guide"
 

@@ -284,31 +284,62 @@ def find_last_grounded_qa_exchange(
 def derive_summary_title(prev_user_text: Optional[str], prev_assistant_text: str) -> str:
     """Derive an informative H1 title for summary artifacts.
 
-    Rejects command strings (e.g. artifact/essay generation instructions) and
-    extracts the topic from the grounded user question or headings in the assistant text.
+    Rejects command strings (e.g. artifact/essay generation instructions). For
+    grounded questions, strips question frames in a deterministic cascade so
+    the title is the clean noun phrase (title-cased with ": Summary"). Falls
+    back to the first heading in the answer, then to a generic default.
     """
     if prev_user_text and not is_command_string(prev_user_text):
-        cleaned = prev_user_text.strip()
-        for _ in range(2):
-            cleaned = re.sub(
-                r"^(?:what|how|why|who|can you|could you|tell me|explain|describe)\s+(?:did|does|do|is|are|about|to)?\s*",
-                "",
-                cleaned,
-                flags=re.IGNORECASE,
-            ).strip()
-        cleaned = re.sub(
+        cleaned = prev_user_text.strip().rstrip("?.,!").strip()
+
+        # Question-frame cascade. Each pattern is anchored to the start and
+        # strips a known lead-in; apply repeatedly until nothing changes so
+        # layered frames ("what do the guests say about...") collapse. Order
+        # matters: longer, more specific frames go first.
+        frames = [
+            # "what does/do the podcast/guests/people say/think/recommend about X"
+            r"^(?:what|how)\s+(?:do(?:es)?|should|would|could|did)\s+(?:the\s+|an?\s+)?"
+            r"(?:podcast|guests?|people|lenny|founders?|startups?|teams?|pms?|users?|customers?|experts?)\s+"
+            r"(?:say|think|recommend|discuss|mention|believe|argue|suggest|advise|do|know)\s+(?:about\s+)?",
+            # "how should a startup think about X" / "how do I think about X"
+            r"^(?:how|what)\s+(?:do(?:es)?|should|would|could|can)\s+"
+            r"(?:a\s+|an\s+|the\s+|i\s+|we\s+|you\s+|they\s+|one\s+)?[\w\- ]{0,25}?"
+            r"\s*think\s+about\s+",
+            # "how do I know when/if I have X" / "how to know when you have X"
+            r"^(?:how\s+)?(?:do\s+(?:you|i|we)|to)\s+know\s+(?:when|if)\s+(?:you|i|we)\s+have\s+",
+            # "how do I/you/we X"  — but keep the X
+            r"^how\s+(?:do|does|did|should|would|could|can)\s+(?:i|you|we|they|one|a|an|the)\s+",
+            # "what is / what are / what was X"
+            r"^what\s+(?:is|are|was|were)\s+(?:the\s+|an?\s+)?",
+            # "tell me (more )?about X" / "explain X" / "describe X"
+            r"^(?:please\s+)?(?:tell\s+me\s+(?:more\s+)?about|explain|describe|elaborate\s+on)\s+",
+            # "can you / could you ..." leading phrase
+            r"^(?:can|could|would|will)\s+you\s+(?:please\s+)?",
+            # Residual leading question words: who/why/when/where/how plus
+            # auxiliary verb; strip ONLY if what follows still has >= 2 words
+            r"^(?:why|who|when|where)\s+(?:is|are|was|were|does|do|did|should|would|could|can)\s+",
+            # "say/think/recommend about" if a frame starts there
             r"^(?:(?:lenny|guests?|people)\s+)?(?:say|think|recommend|discuss|mention)\s+(?:about\s+)?",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-        cleaned = re.sub(
-            r"^(?:do\s+you\s+know\s+(?:when|if)\s+you\s+have|to\s+know\s+(?:when|if)\s+you\s+have|how\s+to\s+know\s+(?:when|if)\s+you\s+have)\s+",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+        ]
+
+        prev = None
+        while cleaned != prev:
+            prev = cleaned
+            for pat in frames:
+                new = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+                if new and new != cleaned:
+                    cleaned = new
+                    break
+
         cleaned = cleaned.rstrip("?.,!").strip()
+
+        # Strip residual leading articles/determiners that are not part of the
+        # noun phrase itself ("the podcast" leaked by a non-matching frame).
+        for lead in ("the ", "a ", "an "):
+            if cleaned.lower().startswith(lead):
+                cleaned = cleaned[len(lead):].strip()
+                break
+
         if (
             len(cleaned) > 3
             and cleaned.lower() not in ("that", "this", "it", "explain that more", "explain that", "more")
@@ -1020,6 +1051,29 @@ async def post_message(
                 warnings=[],
             )
 
+        # R1: detect a grounded follow-up. A grounded follow-up is a short or
+        # anaphoric user message whose most recent prior assistant turn was a
+        # grounded answer (not a refusal and carried >=1 citation). These
+        # bypass the retrieval score gate — the enriched rewritten query is
+        # often too long/diffuse to clear the floor even when the user is
+        # clearly asking about the same topic — and merge the previous
+        # answer's cited chunks into the sources list so the agent + verifier
+        # can still ground the follow-up.
+        is_grounded_followup = False
+        prev_asst_for_followup: Optional[Message] = None
+        if history_messages and not is_standalone_query(body.content):
+            last = history_messages[-1]
+            if (
+                last.role == "assistant"
+                and last.content != EXACT_REFUSAL_MESSAGE
+                and not last.content.startswith(
+                    "I don't have information about that in the transcripts."
+                )
+                and last.citations
+            ):
+                is_grounded_followup = True
+                prev_asst_for_followup = last
+
         # QA Intent: retrieve with threshold gate
         search_query = rewrite_query(body.content, history=history_messages)
         threshold = settings.retrieval_min_score
@@ -1032,7 +1086,7 @@ async def post_message(
         )
         top_score = raw_chunks[0].score if raw_chunks else 0.0
 
-        if not raw_chunks or top_score < threshold:
+        if not is_grounded_followup and (not raw_chunks or top_score < threshold):
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             logger.info(
                 "Immediate refusal triggered: top_score=%.4f < threshold=%.4f query=%r",
@@ -1073,7 +1127,27 @@ async def post_message(
                 warnings=[],
             )
 
-        sources = [c for c in raw_chunks if c.score >= threshold]
+        if is_grounded_followup:
+            # Merge previous answer's cited chunks with fresh retrieval,
+            # dedupe by chunk_id, cap at retrieval_top_k. Previously cited
+            # chunks lead so the agent sees the sources that produced the
+            # grounded answer the user is following up on.
+            prev_cits = list(prev_asst_for_followup.citations or []) if prev_asst_for_followup else []
+            prev_sources = await _load_sources_from_citations(prev_cits, db)
+            seen_ids: set = set()
+            merged: List[RetrievalResult] = []
+            for c in list(prev_sources) + list(raw_chunks):
+                if c.chunk_id in seen_ids:
+                    continue
+                seen_ids.add(c.chunk_id)
+                merged.append(c)
+            sources = merged[: settings.retrieval_top_k]
+            logger.info(
+                "Grounded follow-up detected: bypassing score gate; merged %d prev + %d fresh -> %d sources (top_score=%.4f threshold=%.4f)",
+                len(prev_sources), len(raw_chunks), len(sources), top_score, threshold,
+            )
+        else:
+            sources = [c for c in raw_chunks if c.score >= threshold]
 
         system_prompt = build_system_prompt(
             sources=sources,
