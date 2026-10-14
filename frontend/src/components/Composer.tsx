@@ -124,24 +124,32 @@ export const Composer: React.FC<ComposerProps> = ({
         />
 
         <div className="composer-controls">
-          <span
-            className={getCounterClass()}
-            data-testid="char-counter"
-            aria-live="polite"
-          >
-            {content.length.toLocaleString()} / {maxLength.toLocaleString()}
-          </span>
+          <div className="composer-hints" aria-hidden="true">
+            <span><kbd>↵</kbd> Send</span>
+            <span style={{ opacity: 0.35 }}>•</span>
+            <span><kbd>⇧↵</kbd> New line</span>
+          </div>
 
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="btn-send"
-            aria-label="Send message"
-            data-testid="composer-send-btn"
-          >
-            <ArrowUp size={18} aria-hidden="true" />
-          </button>
+          <div className="composer-actions">
+            <span
+              className={getCounterClass()}
+              data-testid="char-counter"
+              aria-live="polite"
+            >
+              {content.length.toLocaleString()} / {maxLength.toLocaleString()}
+            </span>
+
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="btn-send"
+              aria-label="Send message"
+              data-testid="composer-send-btn"
+            >
+              <ArrowUp size={18} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
 

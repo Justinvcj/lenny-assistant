@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { AlertTriangle, Clock, FileCode } from 'lucide-react';
+import { AlertTriangle, FileCode } from 'lucide-react';
 import { Message, EXACT_REFUSAL_MESSAGE } from '../api';
 import { CitationChips } from './CitationChips';
 import { RefusalCard } from './RefusalCard';
@@ -17,6 +17,40 @@ export const isRefusalContent = (content: string): boolean => {
   return content.trim().replace(/\.$/, '') === EXACT_REFUSAL_MESSAGE.replace(/\.$/, '');
 };
 
+const CodeBlock: React.FC<{ language?: string; code: string }> = ({ language, code }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.warn('Failed to copy code snippet:', err);
+    }
+  };
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header">
+        <span className="code-block-lang">{language || 'code'}</span>
+        <button
+          type="button"
+          className="code-copy-btn"
+          onClick={handleCopy}
+          aria-label="Copy code snippet"
+        >
+          <span className="code-copy-icon" aria-hidden="true">{copied ? '✓' : '⧉'}</span>
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+};
+
 export interface MessageItemProps {
   message: Message;
   onCitationClick?: (citationNumber: number) => void;
@@ -30,7 +64,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 }) => {
   const isUser = message.role === 'user';
   const isRefusal = !isUser && isRefusalContent(message.content);
-  const [activeCitation, setActiveCitation] = React.useState<number | null>(null);
+  const [activeCitation, setActiveCitation] = useState<number | null>(null);
+  const [copiedMessage, setCopiedMessage] = useState(false);
 
   const handleInlineCitationClick = React.useCallback((citationNum: number) => {
     setActiveCitation(null);
@@ -41,6 +76,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       onCitationClick(citationNum);
     }
   }, [onCitationClick]);
+
+  const handleCopyMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedMessage(true);
+      setTimeout(() => setCopiedMessage(false), 2000);
+    } catch (err) {
+      console.warn('Failed to copy message:', err);
+    }
+  };
 
   // Transform [S1] -> [S1](#source-1) for inline interactive chip rendering
   const processedContent = useMemo(() => {
@@ -86,15 +131,21 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   return (
     <div className="message-item">
       <div className="message-assistant" role="article" aria-label="Assistant Response">
-        {/* Meta badges: Degraded mode, Warnings & Latency */}
-        {(message.degraded || formattedLatency || (message.warnings && message.warnings.length > 0)) && (
-          <div className="message-meta">
+        {/* Assistant Header: Avatar, Name & Action Bar */}
+        <div className="assistant-header-row">
+          <div className="assistant-identity">
+            <div className="assistant-avatar" aria-hidden="true">
+              <span className="avatar-sparkle">✦</span>
+            </div>
+            <span className="assistant-name">Lenny Assistant</span>
+
+            {/* Meta badges: Degraded mode, Warnings & Latency */}
             {message.degraded && (
               <span
                 className="badge-degraded"
                 title={degradedReason ? `Degraded: ${degradedReason}` : "Answered in degraded fallback mode without agent runtime"}
               >
-                <AlertTriangle size={12} style={{ marginRight: '4px' }} aria-hidden="true" />
+                <AlertTriangle size={11} style={{ marginRight: '3px' }} aria-hidden="true" />
                 Degraded
               </span>
             )}
@@ -103,21 +154,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 key={idx}
                 className="badge-warning"
                 data-testid="unsupported-name-warning"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  fontSize: '0.75rem',
-                  color: '#b45309',
-                  backgroundColor: '#fef3c7',
-                  border: '1px solid #fde68a',
-                  padding: '2px 8px',
-                  borderRadius: '12px',
-                  fontWeight: 500,
-                  gap: '4px',
-                }}
                 title={w}
               >
-                <AlertTriangle size={12} aria-hidden="true" />
+                <AlertTriangle size={11} aria-hidden="true" />
                 {w}
               </span>
             ))}
@@ -132,12 +171,25 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 }}
                 title={`Generation latency: ${message.latency_ms}ms`}
               >
-                <Clock size={12} aria-hidden="true" />
+                <span className="latency-icon" aria-hidden="true">⏱</span>
                 {formattedLatency}
               </span>
             )}
           </div>
-        )}
+
+          <div className="message-action-bar">
+            <button
+              type="button"
+              className="btn-msg-action"
+              onClick={handleCopyMessage}
+              aria-label="Copy message text"
+              title="Copy answer"
+            >
+              <span className="btn-msg-icon" aria-hidden="true">{copiedMessage ? '✓' : '⧉'}</span>
+              <span>{copiedMessage ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+        </div>
 
         {/* Safe Markdown Content */}
         <div className="message-body">
@@ -175,6 +227,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                   </a>
                 );
               },
+              code: ({ inline, className, children, ...props }: any) => {
+                const match = /language-(\w+)/.exec(className || '');
+                const codeString = String(children).replace(/\n$/, '');
+                if (!inline && (match || codeString.includes('\n'))) {
+                  return <CodeBlock language={match ? match[1] : ''} code={codeString} />;
+                }
+                return (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
+              },
             }}
           >
             {processedContent}
@@ -201,19 +265,6 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 type="button"
                 className="btn-open-artifact"
                 onClick={() => onOpenArtifact?.(art)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  padding: '0.35rem 0.75rem',
-                  backgroundColor: 'var(--bg-surface-inset)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--brand-accent)',
-                  fontSize: '0.8rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
                 aria-label={`Open artifact: ${artTitle}`}
               >
                 <FileCode size={14} aria-hidden="true" />

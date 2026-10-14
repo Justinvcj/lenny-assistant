@@ -378,6 +378,15 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-shell">
+      {/* Ambient Deep Glow Background Layer */}
+      <div className="bg-ambient-layer" aria-hidden="true">
+        <div className="ambient-orb orb-1" />
+        <div className="ambient-orb orb-2" />
+        <div className="ambient-orb orb-3" />
+        <div className="ambient-noise" />
+        <div className="ambient-grid" />
+      </div>
+
       {/* 1. Header */}
       <Header
         provider={config?.provider}

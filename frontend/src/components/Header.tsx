@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, X, Plus } from 'lucide-react';
+import { Menu, X, Plus, Sparkles } from 'lucide-react';
 
 export interface HeaderProps {
   provider?: string | null;
@@ -38,6 +38,10 @@ export const Header: React.FC<HeaderProps> = ({
         >
           {isSidebarOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
         </button>
+
+        <div className="brand-icon-wrapper" aria-hidden="true">
+          <Sparkles size={18} />
+        </div>
 
         <div>
           <h1 className="header-title">Lenny Growth Assistant</h1>

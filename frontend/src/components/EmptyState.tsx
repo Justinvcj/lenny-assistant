@@ -1,10 +1,11 @@
 import React from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Compass, Repeat, Layers, Tag } from 'lucide-react';
 
 export const STARTER_QUESTIONS = [
   'How do I know if I have PMF?',
   'What drives early retention?',
   'How should founders give away Legos?',
+  'What are the best frameworks for pricing?',
 ] as const;
 
 export interface EmptyStateProps {
@@ -13,6 +14,40 @@ export interface EmptyStateProps {
   title?: string;
   description?: string;
 }
+
+interface StarterCardConfig {
+  question: string;
+  title: string;
+  desc: string;
+  icon: React.ReactNode;
+}
+
+const STARTER_CARDS: StarterCardConfig[] = [
+  {
+    question: 'How do I know if I have PMF?',
+    title: 'Recognizing Product-Market Fit',
+    desc: 'Signals, retention curves, and milestones for genuine market pull',
+    icon: <Compass size={18} aria-hidden="true" />,
+  },
+  {
+    question: 'What drives early retention?',
+    title: 'Unlocking Early Retention',
+    desc: 'Cohort analysis, activation habits, and compounding engagement loops',
+    icon: <Repeat size={18} aria-hidden="true" />,
+  },
+  {
+    question: 'How should founders give away Legos?',
+    title: 'Giving Away Legos',
+    desc: 'Scaling organizational leadership, delegation, and role evolution',
+    icon: <Layers size={18} aria-hidden="true" />,
+  },
+  {
+    question: 'What are the best frameworks for pricing?',
+    title: 'Pricing & Packaging Strategy',
+    desc: 'Value metrics, monetization tiers, and willingness-to-pay experiments',
+    icon: <Tag size={18} aria-hidden="true" />,
+  },
+];
 
 export const EmptyState: React.FC<EmptyStateProps> = ({
   onSelectStarterQuestion,
@@ -30,46 +65,46 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <section className="empty-state" aria-labelledby="empty-state-heading">
-      <div
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: '48px',
-          height: '48px',
-          borderRadius: '50%',
-          backgroundColor: 'var(--brand-accent-bg)',
-          color: 'var(--brand-accent)',
-          marginBottom: '1rem',
-        }}
-      >
-        <Sparkles size={24} aria-hidden="true" />
+      {/* High-end Pill Badge */}
+      <div className="hero-pill-badge" data-testid="hero-pill-badge">
+        <Sparkles size={14} aria-hidden="true" />
+        <span>{title}</span>
       </div>
+
+      {/* Signature Headline pairing Sans + Instrument Serif Italic */}
       <h2 id="empty-state-heading" className="empty-state-title">
-        {title}
+        <span className="sr-only">{title} — </span>
+        Grow <em className="serif-accent">smarter</em> with Lenny's transcripts
       </h2>
+
       <p className="empty-state-desc">{description}</p>
 
+      {/* 2x2 Suggested Prompt Cards Grid */}
       <div
         className="starter-questions-grid"
         role="group"
         aria-label="Starter questions"
       >
-        {STARTER_QUESTIONS.map((question, index) => (
+        {STARTER_CARDS.map((card, index) => (
           <button
             key={index}
             type="button"
             className="starter-chip"
-            onClick={() => handleSelect(question)}
-            aria-label={`Ask question: ${question}`}
+            onClick={() => handleSelect(card.question)}
+            aria-label={`Ask question: ${card.question}`}
           >
-            {question}
+            <div className="starter-chip-icon">
+              {card.icon}
+            </div>
+            <span className="starter-chip-title">{card.title}</span>
+            <span className="starter-chip-desc">{card.desc}</span>
           </button>
         ))}
       </div>
 
+      {/* Contextual Action Hints */}
       <div className="empty-state-hints">
-        <span className="empty-hint-label">💡 Follow-up hints:</span>
+        <span className="empty-hint-label">💡 Suggested prompts:</span>
         <button
           type="button"
           className="empty-hint-chip"
@@ -78,7 +113,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         >
           "Turn that into a Ship 30 essay"
         </button>
-        <span className="empty-hint-separator">or</span>
+        <span className="empty-hint-separator">·</span>
         <button
           type="button"
           className="empty-hint-chip"
