@@ -6,6 +6,9 @@ import { afterEach, vi } from 'vitest';
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
 });
 
 // Polyfill window & element scroll methods missing in JSDOM (needed for auto-scroll in chat)
@@ -33,3 +36,42 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: vi.fn(),
   })),
 });
+
+// Polyfill pointer capture methods missing in JSDOM for Radix UI compatibility
+if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false;
+if (!Element.prototype.setPointerCapture) Element.prototype.setPointerCapture = () => {};
+if (!Element.prototype.releasePointerCapture) Element.prototype.releasePointerCapture = () => {};
+
+// Polyfill localStorage for JSDOM / Node environment
+const createLocalStorageMock = () => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = String(value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+    get length() {
+      return Object.keys(store).length;
+    },
+    key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
+  };
+};
+
+const lsMock = createLocalStorageMock();
+Object.defineProperty(window, 'localStorage', {
+  value: lsMock,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, 'localStorage', {
+  value: lsMock,
+  writable: true,
+  configurable: true,
+});
+

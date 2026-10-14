@@ -13,3 +13,6 @@ dist/
 
 # GSD state — .gsd/STATE.md is tracked (our session resume file)
 .gsd/scratch/
+
+# Personal interview-prep notes (never commit)
+_interview-prep/

@@ -55,17 +55,27 @@ export interface MessageItemProps {
   message: Message;
   onCitationClick?: (citationNumber: number) => void;
   onOpenArtifact?: (artifact: any) => void;
+  onRegenerate?: () => void;
+  onEdit?: (content: string) => void;
+  onToast?: (msg: string) => void;
 }
 
 export const MessageItem: React.FC<MessageItemProps> = ({
   message,
   onCitationClick,
   onOpenArtifact,
+  onRegenerate,
+  onEdit,
+  onToast,
 }) => {
   const isUser = message.role === 'user';
   const isRefusal = !isUser && isRefusalContent(message.content);
   const [activeCitation, setActiveCitation] = useState<number | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
+  const [feedback, setFeedback] = useState<'up' | 'down' | null>(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    return (window.localStorage.getItem(`lenny_fb_${message.id}`) as any) || null;
+  });
 
   const handleInlineCitationClick = React.useCallback((citationNum: number) => {
     setActiveCitation(null);
@@ -81,10 +91,25 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     try {
       await navigator.clipboard.writeText(message.content);
       setCopiedMessage(true);
+      onToast?.('Copied message to clipboard');
       setTimeout(() => setCopiedMessage(false), 2000);
     } catch (err) {
       console.warn('Failed to copy message:', err);
     }
+  };
+
+  const handleFeedback = (type: 'up' | 'down') => {
+    const next = feedback === type ? null : type;
+    setFeedback(next);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      if (next) {
+        window.localStorage.setItem(`lenny_fb_${message.id}`, next);
+      } else {
+        window.localStorage.removeItem(`lenny_fb_${message.id}`);
+      }
+    }
+    if (next === 'up') onToast?.('Feedback saved: Helpful response');
+    if (next === 'down') onToast?.('Feedback saved: Needs improvement');
   };
 
   // Transform [S1] -> [S1](#source-1) for inline interactive chip rendering
@@ -96,9 +121,31 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   // User Message
   if (isUser) {
     return (
-      <div className="message-item">
+      <div className="message-item user-message-wrapper">
         <div className="message-user" role="article" aria-label="User Message">
           <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{message.content}</p>
+          <div className="user-message-actions">
+            <button
+              type="button"
+              className="btn-user-action"
+              onClick={handleCopyMessage}
+              aria-label="Copy prompt text"
+              title="Copy prompt"
+            >
+              <span aria-hidden="true" style={{ fontSize: '12px' }}>⧉</span>
+            </button>
+            {onEdit && (
+              <button
+                type="button"
+                className="btn-user-action"
+                onClick={() => onEdit(message.content)}
+                aria-label="Edit message"
+                title="Edit message"
+              >
+                <span aria-hidden="true" style={{ fontSize: '12px' }}>✎</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -187,6 +234,39 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             >
               <span className="btn-msg-icon" aria-hidden="true">{copiedMessage ? '✓' : '⧉'}</span>
               <span>{copiedMessage ? 'Copied' : 'Copy'}</span>
+            </button>
+
+            {onRegenerate && (
+              <button
+                type="button"
+                className="btn-msg-action"
+                onClick={onRegenerate}
+                aria-label="Regenerate response"
+                title="Regenerate answer"
+              >
+                <span aria-hidden="true" style={{ fontSize: '13px' }}>↻</span>
+                <span>Regenerate</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`btn-msg-action-icon ${feedback === 'up' ? 'active-feedback' : ''}`}
+              onClick={() => handleFeedback('up')}
+              aria-label="Thumbs up good response"
+              title="Good response"
+            >
+              <span aria-hidden="true" style={{ fontSize: '13px' }}>👍</span>
+            </button>
+
+            <button
+              type="button"
+              className={`btn-msg-action-icon ${feedback === 'down' ? 'active-feedback' : ''}`}
+              onClick={() => handleFeedback('down')}
+              aria-label="Thumbs down poor response"
+              title="Poor response"
+            >
+              <span aria-hidden="true" style={{ fontSize: '13px' }}>👎</span>
             </button>
           </div>
         </div>

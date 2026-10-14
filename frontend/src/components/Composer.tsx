@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
 
 export interface ComposerProps {
   onSend?: (content: string) => void | Promise<void>;
   onSendMessage?: (content: string) => void | Promise<void>;
+  onStop?: () => void;
   inflight?: boolean;
   disabled?: boolean;
   isSending?: boolean;
@@ -23,6 +24,7 @@ const DEFAULT_QUICK_ACTIONS = [
 export const Composer: React.FC<ComposerProps> = ({
   onSend,
   onSendMessage,
+  onStop,
   inflight = false,
   disabled = false,
   isSending = false,
@@ -139,16 +141,29 @@ export const Composer: React.FC<ComposerProps> = ({
               {content.length.toLocaleString()} / {maxLength.toLocaleString()}
             </span>
 
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              className="btn-send"
-              aria-label="Send message"
-              data-testid="composer-send-btn"
-            >
-              <ArrowUp size={18} aria-hidden="true" />
-            </button>
+            {isPending && onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="btn-send btn-stop"
+                aria-label="Stop generating"
+                data-testid="composer-stop-btn"
+                title="Stop generating"
+              >
+                <Square size={13} fill="currentColor" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSubmit}
+                className="btn-send"
+                aria-label="Send message"
+                data-testid="composer-send-btn"
+              >
+                <ArrowUp size={18} aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
       </div>

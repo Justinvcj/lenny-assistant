@@ -1,0 +1,293 @@
+{
+  "timestamp": "2026-10-14T07:02:51.472526+00:00",
+  "target_url": "http://127.0.0.1:5173",
+  "browser_channel": "chrome",
+  "total_cases": 14,
+  "passed": 13,
+  "failed": 1,
+  "success_rate": "92.9%",
+  "results": [
+    {
+      "id": "ADV-01",
+      "name": "Extreme Small Viewport 320x500 (Mobile)",
+      "viewport": {
+        "width": 320,
+        "height": 500
+      },
+      "scenario": "default",
+      "dock_rect": {
+        "top": 294.25,
+        "bottom": 500,
+        "height": 205.75
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 320,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_01_viewport_320x500.png"
+    },
+    {
+      "id": "ADV-02",
+      "name": "Ultra-Short Mobile 320x450",
+      "viewport": {
+        "width": 320,
+        "height": 450
+      },
+      "scenario": "default",
+      "dock_rect": {
+        "top": 244.25,
+        "bottom": 450,
+        "height": 205.75
+      },
+      "clipping_px": 0.0,
+      "win_height": 450,
+      "win_width": 320,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_02_viewport_320x450.png"
+    },
+    {
+      "id": "ADV-03",
+      "name": "Landscape Mobile Tiny 480x500",
+      "viewport": {
+        "width": 480,
+        "height": 500
+      },
+      "scenario": "default",
+      "dock_rect": {
+        "top": 324.75,
+        "bottom": 500,
+        "height": 175.25
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 480,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_03_viewport_480x500.png"
+    },
+    {
+      "id": "ADV-04",
+      "name": "Desktop Short 1024x500",
+      "viewport": {
+        "width": 1024,
+        "height": 500
+      },
+      "scenario": "default",
+      "dock_rect": {
+        "top": 321,
+        "bottom": 500,
+        "height": 179
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 1024,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_04_desktop_1024x500.png"
+    },
+    {
+      "id": "ADV-05",
+      "name": "Wide Desktop Short 1280x500",
+      "viewport": {
+        "width": 1280,
+        "height": 500
+      },
+      "scenario": "default",
+      "dock_rect": {
+        "top": 321,
+        "bottom": 500,
+        "height": 179
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_05_desktop_1280x500.png"
+    },
+    {
+      "id": "ADV-06",
+      "name": "Multiline Stress 10 Lines (1280x600)",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "scenario": "multiline_10",
+      "dock_rect": {
+        "top": 313,
+        "bottom": 600,
+        "height": 287
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_06_multiline_10.png"
+    },
+    {
+      "id": "ADV-07",
+      "name": "Multiline Stress 25 Lines (1280x600)",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "scenario": "multiline_25",
+      "dock_rect": {
+        "top": 313,
+        "bottom": 600,
+        "height": 287
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_07_multiline_25.png"
+    },
+    {
+      "id": "ADV-08",
+      "name": "Multiline Stress 50 Lines (1280x500)",
+      "viewport": {
+        "width": 1280,
+        "height": 500
+      },
+      "scenario": "multiline_50",
+      "dock_rect": {
+        "top": 213,
+        "bottom": 500,
+        "height": 287
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_08_multiline_50_short.png"
+    },
+    {
+      "id": "ADV-09",
+      "name": "Multiline Stress 4000 Chars Limit (1280x600)",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "scenario": "multiline_4000chars",
+      "dock_rect": {
+        "top": 313,
+        "bottom": 600,
+        "height": 287
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_09_multiline_4000chars.png"
+    },
+    {
+      "id": "ADV-10",
+      "name": "Unbroken Token Stress (500 chars unbroken)",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "scenario": "unbroken_string",
+      "dock_rect": {
+        "top": 383.75,
+        "bottom": 667,
+        "height": 283.25
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_10_unbroken_string.png"
+    },
+    {
+      "id": "ADV-11",
+      "name": "Zero Messages Empty State Layout (320x500)",
+      "viewport": {
+        "width": 320,
+        "height": 500
+      },
+      "scenario": "zero_messages",
+      "dock_rect": {
+        "top": 294.25,
+        "bottom": 500,
+        "height": 205.75
+      },
+      "clipping_px": 0.0,
+      "win_height": 500,
+      "win_width": 320,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_11_zero_messages_320x500.png"
+    },
+    {
+      "id": "ADV-12",
+      "name": "50+ Messages Scroll Containment Stress",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "scenario": "50_messages",
+      "dock_rect": {
+        "top": 421,
+        "bottom": 600,
+        "height": 179
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_12_50_messages_scroll.png"
+    },
+    {
+      "id": "ADV-13",
+      "name": "Ctrl+B Shortcut Desktop Toggle & LocalStorage",
+      "viewport": {
+        "width": 1280,
+        "height": 768
+      },
+      "scenario": "ctrl_b_desktop",
+      "dock_rect": {
+        "top": 589,
+        "bottom": 768,
+        "height": 179
+      },
+      "clipping_px": 0.0,
+      "win_height": 768,
+      "win_width": 1280,
+      "status": "FAIL",
+      "failures": [
+        "Ctrl+B second press failed to revert localStorage"
+      ],
+      "screenshot": "adv_13_ctrl_b_desktop.png"
+    },
+    {
+      "id": "ADV-14",
+      "name": "Ctrl+B Shortcut Mobile Drawer Toggle",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "scenario": "ctrl_b_mobile",
+      "dock_rect": {
+        "top": 491.75,
+        "bottom": 667,
+        "height": 175.25
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "adv_14_ctrl_b_mobile.png"
+    }
+  ]
+}

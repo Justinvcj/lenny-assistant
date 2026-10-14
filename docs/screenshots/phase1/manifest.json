@@ -1,0 +1,375 @@
+{
+  "timestamp": "2026-10-14T06:58:39.950509+00:00",
+  "target_url": "http://127.0.0.1:5173",
+  "browser_channel": "chrome",
+  "total_cases": 14,
+  "passed": 14,
+  "failed": 0,
+  "success_rate": "100.0%",
+  "results": [
+    {
+      "id": "TC-01",
+      "name": "Desktop 1280x600 @ 100%",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 421,
+        "width": 1020,
+        "height": 179,
+        "top": 421,
+        "bottom": 600,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x600_zoom100.png"
+    },
+    {
+      "id": "TC-02",
+      "name": "Desktop 1280x600 @ 125%",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "device_scale_factor": 1.25,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 421,
+        "width": 1020,
+        "height": 179,
+        "top": 421,
+        "bottom": 600,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x600_zoom125.png"
+    },
+    {
+      "id": "TC-03",
+      "name": "Desktop 1280x600 @ 150%",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "device_scale_factor": 1.5,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 421,
+        "width": 1020,
+        "height": 179,
+        "top": 421,
+        "bottom": 600,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x600_zoom150.png"
+    },
+    {
+      "id": "TC-04",
+      "name": "Desktop 1280x768 @ 100%",
+      "viewport": {
+        "width": 1280,
+        "height": 768
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 589,
+        "width": 1020,
+        "height": 179,
+        "top": 589,
+        "bottom": 768,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 768,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x768_zoom100.png"
+    },
+    {
+      "id": "TC-05",
+      "name": "Desktop 1280x768 @ 125%",
+      "viewport": {
+        "width": 1280,
+        "height": 768
+      },
+      "device_scale_factor": 1.25,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 589,
+        "width": 1020,
+        "height": 179,
+        "top": 589,
+        "bottom": 768,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 768,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x768_zoom125.png"
+    },
+    {
+      "id": "TC-06",
+      "name": "Desktop 1280x768 @ 150%",
+      "viewport": {
+        "width": 1280,
+        "height": 768
+      },
+      "device_scale_factor": 1.5,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 589,
+        "width": 1020,
+        "height": 179,
+        "top": 589,
+        "bottom": 768,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 768,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1280x768_zoom150.png"
+    },
+    {
+      "id": "TC-07",
+      "name": "Desktop 1440x900 @ 100%",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 721,
+        "width": 1180,
+        "height": 179,
+        "top": 721,
+        "bottom": 900,
+        "right": 1440,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 900,
+      "win_width": 1440,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1440x900_zoom100.png"
+    },
+    {
+      "id": "TC-08",
+      "name": "Desktop 1440x900 @ 125%",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "device_scale_factor": 1.25,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 721,
+        "width": 1180,
+        "height": 179,
+        "top": 721,
+        "bottom": 900,
+        "right": 1440,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 900,
+      "win_width": 1440,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1440x900_zoom125.png"
+    },
+    {
+      "id": "TC-09",
+      "name": "Desktop 1440x900 @ 150%",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "device_scale_factor": 1.5,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 721,
+        "width": 1180,
+        "height": 179,
+        "top": 721,
+        "bottom": 900,
+        "right": 1440,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 900,
+      "win_width": 1440,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "desktop_1440x900_zoom150.png"
+    },
+    {
+      "id": "TC-10",
+      "name": "Mobile 375x667 (Closed)",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": true,
+      "dock_rect": {
+        "x": 0,
+        "y": 491.75,
+        "width": 375,
+        "height": 175.25,
+        "top": 491.75,
+        "bottom": 667,
+        "right": 375,
+        "left": 0
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "mobile_375x667_zoom100_closed.png"
+    },
+    {
+      "id": "TC-11",
+      "name": "Mobile 375x667 (Drawer Open)",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": true,
+      "dock_rect": {
+        "x": 0,
+        "y": 491.75,
+        "width": 375,
+        "height": 175.25,
+        "top": 491.75,
+        "bottom": 667,
+        "right": 375,
+        "left": 0
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "mobile_375x667_zoom100_drawer_open.png"
+    },
+    {
+      "id": "TC-12",
+      "name": "Mobile 375x667 @ 125%",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "device_scale_factor": 1.25,
+      "is_mobile": true,
+      "dock_rect": {
+        "x": 0,
+        "y": 491.75,
+        "width": 375,
+        "height": 175.25,
+        "top": 491.75,
+        "bottom": 667,
+        "right": 375,
+        "left": 0
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "mobile_375x667_zoom125.png"
+    },
+    {
+      "id": "TC-13",
+      "name": "Mobile 375x667 @ 150%",
+      "viewport": {
+        "width": 375,
+        "height": 667
+      },
+      "device_scale_factor": 1.5,
+      "is_mobile": true,
+      "dock_rect": {
+        "x": 0,
+        "y": 491.75,
+        "width": 375,
+        "height": 175.25,
+        "top": 491.75,
+        "bottom": 667,
+        "right": 375,
+        "left": 0
+      },
+      "clipping_px": 0.0,
+      "win_height": 667,
+      "win_width": 375,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "mobile_375x667_zoom150.png"
+    },
+    {
+      "id": "TC-14",
+      "name": "Stress Multiline 1280x600",
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "device_scale_factor": 1.0,
+      "is_mobile": false,
+      "dock_rect": {
+        "x": 260,
+        "y": 363,
+        "width": 1020,
+        "height": 237,
+        "top": 363,
+        "bottom": 600,
+        "right": 1280,
+        "left": 260
+      },
+      "clipping_px": 0.0,
+      "win_height": 600,
+      "win_width": 1280,
+      "status": "PASS",
+      "failures": [],
+      "screenshot": "stress_multiline_expanded_600.png"
+    }
+  ]
+}
